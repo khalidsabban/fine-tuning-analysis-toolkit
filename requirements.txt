@@ -1,0 +1,31 @@
+# Configuuration & CLI
+hydra-code>=1.2
+omegaconf>=2.3
+
+# Deep Learning & adapters
+torch>=2.0
+transformers>=4.30
+peft>=0.5           # For LoRA adapters
+accelerate>=0.20    # For QLoRA + distributed training
+bitsandbytes>=0.39  # 8-bit optimizers (used in QLoRA)
+
+# Training framework
+pytorch-lightning>=1.9
+
+# Experiment tracking & logging
+mlflow>=2.3
+codecarbon>=2.0     # Green AI tracking
+
+# Data processing & matrics
+datasets>=2.11
+scikit-learn>=1.2
+pandas>=2.0
+
+# Dashborad & analysis 
+streamlit>=1.20
+plotly>=5.13        # For interactive charts
+
+# Utilities & formatting
+pyyaml>=6.0
+tqdm>=4.65
+loguru>=0.7
