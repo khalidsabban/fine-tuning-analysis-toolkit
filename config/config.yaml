@@ -1,0 +1,6 @@
+# config/config.yaml
+model:
+  name: your_model_name
+training:
+  learning_rate: 0.0005
+# …etc
