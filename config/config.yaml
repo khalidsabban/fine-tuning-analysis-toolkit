@@ -1,6 +1,16 @@
 # config/config.yaml
 model:
-  name: your_model_name
+  name: sshleifer/tiny-gpt2
+  num_labels: 2
+  lora_rank: 4
+
 training:
-  learning_rate: 0.0005
+  batch_size: 2
+  learning_rate: 1e-3
+  max_steps: 1
+
+carbon:
+  tracker:
+    project_name: gpt2_test
+    output_dir: carbon_logs
 # …etc
