@@ -7,7 +7,7 @@ from toolkit.modules.data_module import DummyDataModule
 from toolkit.modules.trainer_module import TrainerModule
 import pytorch_lightning as pl
 
-@hydra.main(config_path="../../configs", config_name="config")
+@hydra.main(config_path="../../config", config_name="config")
 def main(cfg: DictConfig):
     # Start carbon
     carbon = CarbonTracker(
