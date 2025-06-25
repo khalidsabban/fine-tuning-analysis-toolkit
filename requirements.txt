@@ -8,6 +8,7 @@ transformers>=4.30
 peft>=0.5           # For LoRA adapters
 accelerate>=0.20    # For QLoRA + distributed training
 bitsandbytes>=0.39  # 8-bit optimizers (used in QLoRA)
+numpy<2.0.0
 pytest>=7.0
 
 # Training framework
