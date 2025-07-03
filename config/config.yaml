@@ -1,16 +1,31 @@
 # config/config.yaml
+defaults:
+  - _self_
+
 model:
   name: sshleifer/tiny-gpt2
   num_labels: 2
   lora_rank: 4
 
 training:
-  batch_size: 2
-  learning_rate: 1e-3
+  batch_size: 8
+  learning_rate: 5e-5 # 1e-3
   max_steps: 1
+
+data:
+  dataset_name: imdb
+  split: "train[:1%]"
+  text_field: "text"
+  label_field: "label"
+  num_workers: 2
 
 carbon:
   tracker:
     project_name: gpt2_test
     output_dir: carbon_logs
-# …etc
+
+eval:
+  samples:
+    - "I don't know if I enjoyed it or not."
+    - "I did not enjoy the film."
+    - "This movie was fantastic!"
