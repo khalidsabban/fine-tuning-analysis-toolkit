@@ -53,24 +53,42 @@ def main(cfg: DictConfig) -> None:
         enable_checkpointing=False,
         enable_progress_bar=True,
     )
+
+    # 5) Evaluate *before* training
+    sample_texts = [str(s) for s in cfg.eval.samples]
+    print("\n=== EVALUATION BEFORE TRAINING ===")
+    logits_pre = model(sample_texts)
+    probs_pre = F.softmax(logits_pre, dim=-1)
+    preds_pre = torch.argmax(probs_pre, dim=-1)
+    print("Probs: ", probs_pre)
+    print("Preds: ", preds_pre.tolist())
+
+    # 6) Run the training
     trainer.fit(model, dm)
 
-    # 5) Do a quick forward pass on a small eval sample and print logits
-    # Convert Hydra ListConfig to a real Python list of str
-    sample_texts = [str(s) for s in cfg.eval.samples]
-    logits = model(sample_texts)
-    print("\n\n\n→ Classification logits on eval sample:\n", logits, "\n\n\n")
+    # 7) Evaluate *after* training
+    print("\n=== EVALUATION AFTER TRAINING ===")
 
-    # 6) Logits is shape [batch_size, num_labels]
-    probs = F.softmax(logits, dim=-1) # Convert logits to probabilities
-    preds = torch.argmax(probs, dim=-1) # Get predicted class indices
+    # Forward pass on sample texts
+    # Assuming 'sample_texts' is a batch of tokenized text inputs
+    logits_post = model(sample_texts)
+
+    # Logits shape: [batch_size, num_labels]
+
+    # Convert logits to probabilities
+    probs_post = F.softmax(logits_post, dim=-1)
+
+    # Get predicted class indices
+    preds_post = torch.argmax(probs_post, dim=-1)
+
+    # Print results
+    print("\n\n\n→ Probabilities on eval sample:\n", probs_post)
+    print("→ Predicted classes:", preds_post.tolist())
+    print("\n\n\n")
+
     
-    print("\n\n\n")
-    print("→ Probabilities on eval sample: \n", probs)
-    print("→ Predicted classes: ", preds.tolist())
-    print("\n\n\n")
 
-    # 6) Stop carbon tracking (writes CO₂ log file)
+    # 8) Stop carbon tracking (writes CO₂ log file)
     carbon.stop()
 
 
