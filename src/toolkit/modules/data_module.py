@@ -28,7 +28,7 @@ class HFDataModule(pl.LightningDataModule):
 
     def setup(self, stage=None):
         # load the split, e.g. "train[:1%]" or "train"
-        self.ds = load_dataset(self.dataset_name, split=self.split)
+        self.ds = load_dataset(path=self.dataset_name, split=self.split)
         # optionally map or filter here
 
     def _collate(self, batch):
