@@ -5,12 +5,12 @@ defaults:
 model:
   name: sshleifer/tiny-gpt2
   num_labels: 2
-  lora_rank: 4
+  lora_rank: 16
 
 training:
   batch_size: 8
   learning_rate: 5e-5 # 1e-3
-  max_steps: 1
+  max_steps: 50
 
 data:
   dataset_name: imdb
@@ -26,6 +26,12 @@ carbon:
 
 eval:
   samples:
-    - "I don't know if I enjoyed it or not."
+    - "My name is khalid."
     - "I did not enjoy the film."
     - "This movie was fantastic!"
+    - "I think I will not watch it again."
+
+# To Fix The Error on Google Colab
+hydra:
+  run:
+    dir: .
