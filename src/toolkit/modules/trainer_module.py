@@ -28,6 +28,10 @@ class TrainerModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         texts = batch["text"]
         labels = batch["label"]
+
+        # Fixed: Move the labels to the same device as the model
+        labels = labels.to(self.device)
+
         logits = self(texts)
         loss = F.cross_entropy(logits, labels)
         self.log("train_loss", loss)
