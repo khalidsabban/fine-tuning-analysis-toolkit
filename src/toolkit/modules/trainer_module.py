@@ -29,10 +29,19 @@ class TrainerModule(pl.LightningModule):
         texts = batch["text"]
         labels = batch["label"]
 
+        # Debug:
+        print(f"Original labels device: {labels.device}")
+        print(f"Model device: {self.device}")
+        print(f"Next model parameter device {next(self.adapter.model.parameters()).device}")
+
         # Fixed: Move the labels to the same device as the model
         labels = labels.to(self.device)
+        print(f"Labels device after move: {labels.device}")
 
         logits = self(texts)
+        print(f"Logits device: {logits.device}")
+        print(f"Logits shape: {logits.shape}, Labels shape: {labels.shape}")
+        
         loss = F.cross_entropy(logits, labels)
         self.log("train_loss", loss)
         return loss
