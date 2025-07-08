@@ -52,11 +52,21 @@ def main(cfg: DictConfig) -> None:
         logger=False,
         enable_checkpointing=False,
         enable_progress_bar=True,
+
+        # Device configuratioin - PyTorch lightning handles device placement
+        accelerator="auto", # Automatically detect GPU/CPU
+        device="auto",      # Use all available devices
+        strategy="auto",    # Let PyTorch Lightning choose the best strategy
     )
 
     # 5) Evaluate *before* training
     sample_texts = [str(s) for s in cfg.eval.samples]
     print("\n=== EVALUATION BEFORE TRAINING ===")
+
+    # The device that the model will be on after trainer setup
+    device = next(model.parameters()).device
+    print(f"Model device: {device}")
+
     logits_pre = model(sample_texts)
     probs_pre = F.softmax(logits_pre, dim=-1)
     preds_pre = torch.argmax(probs_pre, dim=-1)
@@ -68,6 +78,10 @@ def main(cfg: DictConfig) -> None:
 
     # 7) Evaluate *after* training
     print("\n=== EVALUATION AFTER TRAINING ===")
+
+    # The device after training (model should be on GPU if available)
+    device = next(model.parameters()).device
+    print(f"Model device after training: {device}")
 
     # Forward pass on sample texts
     # Assuming 'sample_texts' is a batch of tokenized text inputs
