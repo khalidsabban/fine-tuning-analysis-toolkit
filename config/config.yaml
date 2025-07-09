@@ -14,7 +14,7 @@ training:
 
 data:
   dataset_name: imdb
-  split: "train[:10%]" # (2,500 samples)
+  split: "train" 
   text_field: "text"
   label_field: "label"
   num_workers: 2
