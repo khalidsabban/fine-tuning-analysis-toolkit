@@ -3,7 +3,7 @@ defaults:
   - _self_
 
 model:
-  name: sshleifer/tiny-gpt2
+  name: gpt2
   num_labels: 2
   lora_rank: 16
 
