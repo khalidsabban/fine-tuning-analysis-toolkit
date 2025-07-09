@@ -61,21 +61,21 @@ def main(cfg: DictConfig) -> None:
     # Try to get the device safely - handle LoRA adapter structure
     try:
         device = next(model.parameters()).device
-        print(f"Model device: {device}")
+        #print(f"Model device: {device}")
     except StopIteration:
         try:
             # Try to get device from the adapter model
             device = next(model.adapter.model.parameters()).device
-            print(f"Model device (from adapter): {device}")
+            #print(f"Model device (from adapter): {device}")
         except:
-            print("Model parameters not accessible yet, using default device")
+            #print("Model parameters not accessible yet, using default device")
             device = torch.device("cpu")
     
     logits_pre = model(sample_texts)
     probs_pre = F.softmax(logits_pre, dim=-1)
     preds_pre = torch.argmax(probs_pre, dim=-1)
-    print("Probs: ", probs_pre)
-    print("Preds: ", preds_pre.tolist())
+    #print("Probs: ", probs_pre)
+    #print("Preds: ", preds_pre.tolist())
 
     # 6) Run the training
     trainer.fit(model, dm)
@@ -86,14 +86,14 @@ def main(cfg: DictConfig) -> None:
     # Get the device after training (model should be on GPU if available)
     try:
         device = next(model.parameters()).device
-        print(f"Model device after training: {device}")
+        #print(f"Model device after training: {device}")
     except StopIteration:
         try:
             # Try to get device from the adapter model
             device = next(model.adapter.model.parameters()).device
-            print(f"Model device after training (from adapter): {device}")
+            #print(f"Model device after training (from adapter): {device}")
         except:
-            print("Model parameters still not accessible")
+            #print("Model parameters still not accessible")
             device = model.device if hasattr(model, 'device') else torch.device("cpu")
 
     # Forward pass on sample texts
@@ -108,7 +108,7 @@ def main(cfg: DictConfig) -> None:
     preds_post = torch.argmax(probs_post, dim=-1)
 
     # Print results
-    print("\n\n\n→ Probabilities on eval sample:\n", probs_post)
+    print("\n\n→ Probabilities on eval sample:\n", probs_post)
     print("→ Predicted classes:", preds_post.tolist())
     print("\n\n\n")
 
@@ -118,4 +118,3 @@ def main(cfg: DictConfig) -> None:
 
 if __name__ == "__main__":
     main()
-    
