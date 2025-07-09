@@ -52,21 +52,25 @@ def main(cfg: DictConfig) -> None:
         logger=False,
         enable_checkpointing=False,
         enable_progress_bar=True,
-
-        # Device configuratioin - PyTorch lightning handles device placement
-        accelerator="auto", # Automatically detect GPU/CPU
-        device="auto",      # Use all available devices
-        strategy="auto",    # Let PyTorch Lightning choose the best strategy
     )
 
     # 5) Evaluate *before* training
     sample_texts = [str(s) for s in cfg.eval.samples]
     print("\n=== EVALUATION BEFORE TRAINING ===")
-
-    # The device that the model will be on after trainer setup
-    device = next(model.parameters()).device
-    print(f"Model device: {device}")
-
+    
+    # Try to get the device safely - handle LoRA adapter structure
+    try:
+        device = next(model.parameters()).device
+        print(f"Model device: {device}")
+    except StopIteration:
+        try:
+            # Try to get device from the adapter model
+            device = next(model.adapter.model.parameters()).device
+            print(f"Model device (from adapter): {device}")
+        except:
+            print("Model parameters not accessible yet, using default device")
+            device = torch.device("cpu")
+    
     logits_pre = model(sample_texts)
     probs_pre = F.softmax(logits_pre, dim=-1)
     preds_pre = torch.argmax(probs_pre, dim=-1)
@@ -79,12 +83,20 @@ def main(cfg: DictConfig) -> None:
     # 7) Evaluate *after* training
     print("\n=== EVALUATION AFTER TRAINING ===")
 
-    # The device after training (model should be on GPU if available)
-    device = next(model.parameters()).device
-    print(f"Model device after training: {device}")
+    # Get the device after training (model should be on GPU if available)
+    try:
+        device = next(model.parameters()).device
+        print(f"Model device after training: {device}")
+    except StopIteration:
+        try:
+            # Try to get device from the adapter model
+            device = next(model.adapter.model.parameters()).device
+            print(f"Model device after training (from adapter): {device}")
+        except:
+            print("Model parameters still not accessible")
+            device = model.device if hasattr(model, 'device') else torch.device("cpu")
 
     # Forward pass on sample texts
-    # Assuming 'sample_texts' is a batch of tokenized text inputs
     logits_post = model(sample_texts)
 
     # Logits shape: [batch_size, num_labels]
@@ -100,11 +112,10 @@ def main(cfg: DictConfig) -> None:
     print("→ Predicted classes:", preds_post.tolist())
     print("\n\n\n")
 
-    
-
     # 8) Stop carbon tracking (writes CO₂ log file)
     carbon.stop()
 
 
 if __name__ == "__main__":
     main()
+    
