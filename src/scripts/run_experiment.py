@@ -74,8 +74,8 @@ def main(cfg: DictConfig) -> None:
     logits_pre = model(sample_texts)
     probs_pre = F.softmax(logits_pre, dim=-1)
     preds_pre = torch.argmax(probs_pre, dim=-1)
-    #print("Probs: ", probs_pre)
-    #print("Preds: ", preds_pre.tolist())
+    print("Probs: ", probs_pre)
+    print("Preds: ", preds_pre.tolist())
 
     # 6) Run the training
     trainer.fit(model, dm)
