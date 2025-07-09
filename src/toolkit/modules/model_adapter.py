@@ -42,13 +42,19 @@ class ModelAdapter:
         self.model = get_peft_model(base_model, config)
 
     def __call__(self, texts: list[str]):
-        # Tokenize and forward
+        # Tokenize inputs
         inputs = self.tokenizer(
             texts,
             return_tensors="pt",
             padding=True,
             truncation=True,
         )
+        
+        # CRITICAL FIX: Move inputs to the same device as the model
+        device = next(self.model.parameters()).device
+        inputs = {key: value.to(device) for key, value in inputs.items()}
+        
+        # Forward pass
         outputs = self.model(**inputs)
         return outputs.logits
     
