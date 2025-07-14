@@ -44,7 +44,7 @@ def main(cfg: DictConfig) -> None:
     )
     carbon.start()
 
-    # 2) Prepare the HF dataset DataModule
+    # 2) Prepare the HF dataset DataModule (removed max_length parameter)
     dm = HFDataModule(
         dataset_name=cfg.data.dataset_name,
         split=cfg.data.split,
@@ -52,11 +52,10 @@ def main(cfg: DictConfig) -> None:
         label_field=cfg.data.label_field,
         batch_size=cfg.training.batch_size,
         num_workers=cfg.data.num_workers,
-        max_length=cfg.data.get('max_length', 512),
     )
     dm.setup()
 
-    # 3) Initialize the TrainerModule with QLoRA
+    # 3) Initialize the TrainerModule with QLoRA (max_length goes here)
     model = TrainerModule(
         base_model_name=cfg.model.name,
         num_labels=cfg.model.num_labels,
