@@ -1,7 +1,8 @@
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from peft import LoraConfig, get_peft_model
+import torch.nn as nn
 
-class ModelAdapter:
+class ModelAdapter(nn.Module):
     """
     Wraps a HuggingFace model with LoRA via PEFT.
     """
@@ -12,6 +13,7 @@ class ModelAdapter:
         lora_rank: int = 4,
         use_safetensors: bool = True,
     ):
+        super().__init__()
         # Load tokenizer and base model (safetensors to avoid torch.load vuln)
         self.tokenizer = AutoTokenizer.from_pretrained(
             base_model_name,
