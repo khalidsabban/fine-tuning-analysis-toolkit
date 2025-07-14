@@ -31,3 +31,9 @@ plotly>=5.13        # For interactive charts
 pyyaml>=6.0
 tqdm>=4.65
 loguru>=0.7
+
+scipy>=1.10.0
+
+# Optional for better performance
+flash-attn>=2.0.0  # If available for your GPU
+xformers>=0.0.20   # Memory efficient attention

@@ -1,27 +1,33 @@
-# config/config.yaml
+# config/config.yaml - QLoRA Configuration
 defaults:
   - _self_
 
 model:
   name: gpt2
   num_labels: 2
-  lora_rank: 16
+  lora_rank: 16  # Can use higher rank with QLoRA
+  use_qlora: true
+  quantization_config: "nf4"  # Options: "nf4" (recommended) or "fp4"
 
 training:
   max_steps: 1000
-  batch_size: 16
-  learning_rate: 5e-5 # 1e-3
+  batch_size: 8  # Can use larger batch size with QLoRA
+  learning_rate: 2e-4  # Slightly higher LR often works better with QLoRA
+  gradient_accumulation_steps: 2
+  gradient_checkpointing: true
+  use_mixed_precision: true
 
 data:
   dataset_name: imdb
-  split: "train" 
+  split: "train[:10%]"  # Can use more data with QLoRA
   text_field: "text"
   label_field: "label"
   num_workers: 2
+  max_length: 512  # Can handle longer sequences
 
 carbon:
   tracker:
-    project_name: gpt2_test
+    project_name: gpt2_qlora_test
     output_dir: carbon_logs
 
 eval:
@@ -31,7 +37,13 @@ eval:
     - "This movie was fantastic!"
     - "I think I will not watch it again."
 
+# QLoRA-specific settings
+qlora:
+  nested_quantization: true  # Enable double quantization for extra memory savings
+  compute_dtype: "float16"   # Compute in fp16 for speed
+  
 # To Fix The Error on Google Colab
 hydra:
   run:
     dir: .
+    

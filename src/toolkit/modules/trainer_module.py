@@ -5,87 +5,124 @@ from toolkit.modules.model_adapter import ModelAdapter
 
 class TrainerModule(pl.LightningModule):
     """
-    Lightning module wrapping ModelAdapter to train one step.
+    Lightning module wrapping ModelAdapter with QLoRA support.
     """
     def __init__(
         self,
         base_model_name: str = "gpt2",
         num_labels: int = 2,
-        lora_rank: int = 4,
-        learning_rate: float = 1e-3
+        lora_rank: int = 16,
+        learning_rate: float = 2e-4,
+        gradient_checkpointing: bool = True,
+        use_qlora: bool = True,
+        quantization_config: str = "nf4",
+        max_length: int = 512,
+        **kwargs,
     ):
         super().__init__()
+        self.save_hyperparameters()
+        
         self.adapter = ModelAdapter(
             base_model_name=base_model_name,
             num_labels=num_labels,
-            lora_rank=lora_rank
+            lora_rank=lora_rank,
+            use_qlora=use_qlora,
+            quantization_config=quantization_config,
+            max_length=max_length,
         )
+        
         self.learning_rate = learning_rate
+        self.use_qlora = use_qlora
+        
+        # Print memory footprint
+        print(f"📊 Model memory footprint: {self.adapter.get_memory_footprint()}")
+        
+        # Enable gradient checkpointing if requested
+        if gradient_checkpointing and hasattr(self.adapter.model, 'gradient_checkpointing_enable'):
+            self.adapter.model.gradient_checkpointing_enable()
+            print("✅ Gradient checkpointing enabled")
 
     def forward(self, texts: list[str]):
-        # Move the underlying model to the correct device, not the adapter wrapper
-        self.adapter.model.to(self.device)
+        # For QLoRA, the model is already optimally placed
+        if not self.use_qlora:
+            self.adapter.model.to(self.device)
         
-        # Forward pass
-        logits = self.adapter(texts)
-        
-        # Ensure logits are on the correct device
-        logits = logits.to(self.device)
-        
-        return logits
+        # Tokenize, encode, and forward pass
+        outputs = self.adapter.model(**self.adapter.tokenizer(texts, return_tensors='pt', padding=True, truncation=True).to(self.device))
+        # Return logits
+        return outputs.logits
 
     def training_step(self, batch, batch_idx):
         texts = batch["text"]
         labels = batch["label"]
-
-        # Debug: Check initial device states
-        #print(f"Original labels device: {labels.device}")
-        #print(f"Model device (self.device): {self.device}")
-        #print(f"Next model parameter device: {next(self.adapter.model.parameters()).device}")
-
-        # CRITICAL FIX: Move labels to the same device as the model
-        labels = labels.to(self.device)
-        #print(f"Labels device after move: {labels.device}")
-
-        # Forward pass
-        logits = self(texts)
-        #print(f"Logits device: {logits.device}")
-        #print(f"Logits shape: {logits.shape}, Labels shape: {labels.shape}")
         
-        # Calculate loss
+        logits = self(texts)
         loss = F.cross_entropy(logits, labels)
-        self.log("train_loss", loss)
+        
+        # Log metrics
+        self.log("train_loss", loss, prog_bar=True)
+        
+        # Log memory usage periodically
+        if batch_idx % 100 == 0 and torch.cuda.is_available():
+            memory_used = torch.cuda.memory_allocated() / 1024**3
+            memory_reserved = torch.cuda.memory_reserved() / 1024**3
+            self.log("memory_used_gb", memory_used)
+            self.log("memory_reserved_gb", memory_reserved)
+        
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(
-            self.adapter.model.parameters(),
-            lr=self.learning_rate
-        )
+        # For QLoRA, we typically use AdamW with specific settings
+        if self.use_qlora:
+            # Only optimize the trainable parameters (LoRA adapters)
+            trainable_params = [p for p in self.adapter.model.parameters() if p.requires_grad]
+
+            optimizer = torch.optim.AdamW(
+                trainable_params,
+                lr=self.learning_rate,
+                weight_decay=0.0,  # No weight decay for QLoRA
+                betas=(0.9, 0.999),
+                eps=1e-8,
+            )
+
+            # Learning rate scheduler
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=self.trainer.max_steps,
+                eta_min=self.learning_rate * 0.1,
+            )
+            
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": "step",
+                },
+            }
+        else:
+            # Standard optimizer for regular LoRA
+            return torch.optim.AdamW(
+                self.adapter.model.parameters(),
+                lr=self.learning_rate,
+                weight_decay=0.01,
+            )
 
     def on_train_start(self):
-        """Called when training starts - move model to correct device"""
-        #print(f"Training started. Moving model to device: {self.device}")
-        
-        # Move only the underlying PyTorch model, not the adapter wrapper
-        self.adapter.model.to(self.device)
-        
-        # Debug device placement
-        try:
-            actual_device = next(self.adapter.model.parameters()).device
-            #print(f"Model parameters are on device: {actual_device}")
-        except:
-            print("Could not access model parameters")
+        """Called when training starts"""
+        print("🚀 Training started with QLoRA" if self.use_qlora else "🚀 Training started with standard LoRA")
 
-    def on_train_epoch_start(self):
-        """Called at the start of each epoch"""
-        #print(f"Epoch starting. Model device: {self.device}")
-        # Move the underlying model to correct device
-        self.adapter.model.to(self.device)
+    def validation_step(self, batch, batch_idx):
+        texts = batch["text"]
+        labels = batch["label"]
         
-        # Debug: Check if model is actually on the right device
-        try:
-            actual_device = next(self.adapter.model.parameters()).device
-            #print(f"Adapter model actual device after move: {actual_device}")
-        except:
-            print("Could not check adapter model device")
+        logits = self(texts)
+        loss = F.cross_entropy(logits, labels)
+        
+        # Calculate accuracy
+        preds = torch.argmax(logits, dim=-1)
+        acc = (preds == labels).float().mean()
+        
+        self.log("val_loss", loss, prog_bar=True)
+        self.log("val_acc", acc, prog_bar=True)
+        
+        return loss
