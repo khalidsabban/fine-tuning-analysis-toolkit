@@ -8,9 +8,9 @@ model:
   lora_rank: 16
 
 training:
-  batch_size: 8
+  max_steps: 1000
+  batch_size: 16
   learning_rate: 5e-5 # 1e-3
-  max_steps: 50
 
 data:
   dataset_name: imdb
