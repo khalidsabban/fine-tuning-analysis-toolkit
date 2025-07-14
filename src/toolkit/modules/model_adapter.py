@@ -7,7 +7,7 @@ class ModelAdapter:
     """
     def __init__(
         self,
-        base_model_name: str = "sshleifer/tiny-gpt2",
+        base_model_name: str = "gpt2",
         num_labels: int = 2,
         lora_rank: int = 4,
         use_safetensors: bool = True,
