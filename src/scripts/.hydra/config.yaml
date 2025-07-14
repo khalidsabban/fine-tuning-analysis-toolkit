@@ -1,0 +1,24 @@
+model:
+  name: gpt2
+  num_labels: 2
+  lora_rank: 16
+training:
+  batch_size: 8
+  learning_rate: 5.0e-05
+  max_steps: 50
+data:
+  dataset_name: imdb
+  split: train
+  text_field: text
+  label_field: label
+  num_workers: 2
+carbon:
+  tracker:
+    project_name: gpt2_test
+    output_dir: carbon_logs
+eval:
+  samples:
+  - My name is khalid.
+  - I did not enjoy the film.
+  - This movie was fantastic!
+  - I think I will not watch it again.
