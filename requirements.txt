@@ -3,7 +3,8 @@ hydra-core>=1.2
 omegaconf>=2.3
 
 # Deep Learning & adapters - LLM focused
-torch>=2.0.0,<2.2.0
+torch>=2.1.0,<2.4.0  # Updated to support register_fake
+torchvision>=0.16.0,<0.20.0  # Compatible with PyTorch 2.1+
 transformers>=4.30,<4.36
 peft>=0.5,<0.7           # For LoRA adapters
 accelerate>=0.20,<0.25    # For QLoRA + distributed training
@@ -11,9 +12,9 @@ bitsandbytes>=0.39,<0.42  # 8-bit optimizers (used in QLoRA)
 numpy<2.0.0
 pytest>=7.0
 
-# Training framework - Fixed version for compatibility
-pytorch-lightning>=2.0.0,<2.1.0
-torchmetrics>=1.0.0,<1.1.0
+# Training framework - Updated for compatibility
+pytorch-lightning>=2.1.0,<2.4.0  # Updated for PyTorch 2.1+ compatibility
+torchmetrics>=1.2.0,<1.5.0  # Updated for compatibility
 
 # Experiment tracking & logging
 mlflow>=2.3
