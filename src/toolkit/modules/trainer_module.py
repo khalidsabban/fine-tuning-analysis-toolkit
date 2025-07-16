@@ -44,8 +44,15 @@ class TrainerModule(pl.LightningModule):
 
     def forward(self, texts: list[str]):
         # For QLoRA, the model is already optimally placed
+        """
         if not self.use_qlora:
-            self.adapter.model.to(self.device)
+            self.adapter.model.to(self.device) """
+
+        # Force model to CUDA for evaluation (QLoRA models can have mixed devices)
+        devices = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        # Move model to GPU
+        self.adapter.model.to(devices)
         
         # DEBUG: Print device info
         print(f"🔍 DEBUG: self.device = {self.device}")
@@ -64,7 +71,7 @@ class TrainerModule(pl.LightningModule):
         for k, v in tokenized.items():
             print(f"  {k}: {v.device}")
         
-        # Move each tensor in the tokenized dict to the correct device
+        # Move each tensor to GPU
         tokenized = {k: v.to(self.device) for k, v in tokenized.items()}
         
         # DEBUG: Print tokenized tensor devices after moving
