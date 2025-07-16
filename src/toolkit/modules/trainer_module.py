@@ -43,20 +43,12 @@ class TrainerModule(pl.LightningModule):
             print("✅ Gradient checkpointing enabled")
 
     def forward(self, texts: list[str]):
-        # For QLoRA, the model is already optimally placed
-        """
-        if not self.use_qlora:
-            self.adapter.model.to(self.device) """
-
-        # Force model to CUDA for evaluation (QLoRA models can have mixed devices)
-        devices = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-        # Move model to GPU
-        self.adapter.model.to(devices)
+        # Determine the correct device - use model's device, not self.device
+        model_device = next(self.adapter.model.parameters()).device
         
         # DEBUG: Print device info
         print(f"🔍 DEBUG: self.device = {self.device}")
-        print(f"🔍 DEBUG: Model device = {next(self.adapter.model.parameters()).device}")
+        print(f"🔍 DEBUG: Model device = {model_device}")
         
         # Tokenize inputs
         tokenized = self.adapter.tokenizer(
@@ -71,8 +63,8 @@ class TrainerModule(pl.LightningModule):
         for k, v in tokenized.items():
             print(f"  {k}: {v.device}")
         
-        # Move each tensor to GPU
-        tokenized = {k: v.to(self.device) for k, v in tokenized.items()}
+        # Move tensors to the same device as the model
+        tokenized = {k: v.to(model_device) for k, v in tokenized.items()}
         
         # DEBUG: Print tokenized tensor devices after moving
         print(f"🔍 DEBUG: Tokenized tensors after device move:")
