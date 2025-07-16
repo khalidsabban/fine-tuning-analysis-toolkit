@@ -53,7 +53,7 @@ class TrainerModule(pl.LightningModule):
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=self.max_length # Add this if you have max_length as an attribute
+            # max_length=self.max_length # Add this if you have max_length as an attribute
         )
 
         # Move each tensor in the tokenized dict to the correct device
