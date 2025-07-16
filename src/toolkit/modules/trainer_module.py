@@ -47,21 +47,34 @@ class TrainerModule(pl.LightningModule):
         if not self.use_qlora:
             self.adapter.model.to(self.device)
         
+        # DEBUG: Print device info
+        print(f"🔍 DEBUG: self.device = {self.device}")
+        print(f"🔍 DEBUG: Model device = {next(self.adapter.model.parameters()).device}")
+        
         # Tokenize inputs
         tokenized = self.adapter.tokenizer(
             texts,
             return_tensors="pt",
             padding=True,
             truncation=True,
-            # max_length=self.max_length # Add this if you have max_length as an attribute
         )
-
+        
+        # DEBUG: Print tokenized tensor devices before moving
+        print(f"🔍 DEBUG: Tokenized tensors before device move:")
+        for k, v in tokenized.items():
+            print(f"  {k}: {v.device}")
+        
         # Move each tensor in the tokenized dict to the correct device
         tokenized = {k: v.to(self.device) for k, v in tokenized.items()}
-
+        
+        # DEBUG: Print tokenized tensor devices after moving
+        print(f"🔍 DEBUG: Tokenized tensors after device move:")
+        for k, v in tokenized.items():
+            print(f"  {k}: {v.device}")
+    
         # Forward pass through the model
         outputs = self.adapter.model(**tokenized)
-
+        
         # Return logits
         return outputs.logits
 
