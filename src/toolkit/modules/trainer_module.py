@@ -47,8 +47,21 @@ class TrainerModule(pl.LightningModule):
         if not self.use_qlora:
             self.adapter.model.to(self.device)
         
-        # Tokenize, encode, and forward pass
-        outputs = self.adapter.model(**self.adapter.tokenizer(texts, return_tensors='pt', padding=True, truncation=True).to(self.device))
+        # Tokenize inputs
+        tokenized = self.adapter.tokenizer(
+            texts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=self.max_length # Add this if you have max_length as an attribute
+        )
+
+        # Move each tensor in the tokenized dict to the correct device
+        tokenized = {k: v.to(self.device) for k, v in tokenized.items()}
+
+        # Forward pass through the model
+        outputs = self.adapter.model(**tokenized)
+
         # Return logits
         return outputs.logits
 
