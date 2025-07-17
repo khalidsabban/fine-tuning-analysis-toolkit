@@ -111,8 +111,8 @@ class ModelAdapter(nn.Module):
         )
         
         # Move inputs to the same device as the model
-        device = next(self.model.parameters()).device
-        inputs = {key: value.to(device) for key, value in inputs.items()}
+        """device = next(self.model.parameters()).device
+        inputs = {key: value.to(device) for key, value in inputs.items()} """
         
         # Forward pass
         outputs = self.model(**inputs)
