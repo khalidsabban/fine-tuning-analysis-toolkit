@@ -43,39 +43,8 @@ class TrainerModule(pl.LightningModule):
             print("✅ Gradient checkpointing enabled")
 
     def forward(self, texts: list[str]):
-        # Determine the correct device - use model's device, not self.device
-        model_device = next(self.adapter.model.parameters()).device
-        
-        # DEBUG: Print device info
-        print(f"🔍 DEBUG: self.device = {self.device}")
-        print(f"🔍 DEBUG: Model device = {model_device}")
-        
-        # Tokenize inputs
-        tokenized = self.adapter.tokenizer(
-            texts,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-        )
-        
-        # DEBUG: Print tokenized tensor devices before moving
-        print(f"🔍 DEBUG: Tokenized tensors before device move:")
-        for k, v in tokenized.items():
-            print(f"  {k}: {v.device}")
-        
-        # Move tensors to the same device as the model
-        tokenized = {k: v.to(model_device) for k, v in tokenized.items()}
-        
-        # DEBUG: Print tokenized tensor devices after moving
-        print(f"🔍 DEBUG: Tokenized tensors after device move:")
-        for k, v in tokenized.items():
-            print(f"  {k}: {v.device}")
-    
-        # Forward pass through the model
-        outputs = self.adapter.model(**tokenized)
-        
-        # Return logits
-        return outputs.logits
+        # FIXED: Use the adapter's __call__ method which handles device management correctly
+        return self.adapter(texts)
 
     def training_step(self, batch, batch_idx):
         texts = batch["text"]
@@ -151,3 +120,4 @@ class TrainerModule(pl.LightningModule):
         self.log("val_acc", acc, prog_bar=True)
         
         return loss
+    
