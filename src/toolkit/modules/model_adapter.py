@@ -1,20 +1,25 @@
 # model_adapter.py
 
-from transformers import AutoModelForSequenceClassification, AutoTokenizer, BitsAndBytesConfig
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 import torch
 import torch.nn as nn
+from transformers import (
+    AutoModelForSequenceClassification,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+)
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
 class ModelAdapter(nn.Module):
     """
-    Wraps a HuggingFace model with optional QLoRA via PEFT and BitsAndBytesConfig.
-    Ensures the entire model and inputs reside on the same device.
+    Wraps a HuggingFace model with optional QLoRA via PEFT and BitsAndBytesConfig,
+    ensuring the entire model and inputs stay on the same device.
     """
     def __init__(
         self,
         base_model_name: str = "gpt2",
         num_labels: int = 2,
         lora_rank: int = 16,
+        learning_rate: float = 2e-4,
         use_qlora: bool = True,
         use_safetensors: bool = True,
         quantization_config: str = "nf4",
@@ -22,20 +27,25 @@ class ModelAdapter(nn.Module):
     ):
         super().__init__()
         self.max_length = max_length
-        self.use_qlora = use_qlora
+        self.use_qlora   = use_qlora
 
-        # Select device
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Decide the single device we load onto.
+        self.device = (
+            torch.device(f"cuda:{torch.cuda.current_device()}")
+            if torch.cuda.is_available()
+            else torch.device("cpu")
+        )
 
-        # Load tokenizer and ensure a pad token
+        # Load tokenizer and ensure pad_token is set
         self.tokenizer = AutoTokenizer.from_pretrained(
-            base_model_name,
-            use_fast=True,
+            base_model_name, use_fast=True
         )
         if self.tokenizer.pad_token is None:
+            # GPT‑style models often lack a pad token; use eos
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        # Load base model
+        # Build the model (quantized or fp16) with a one‐to‐one device_map
+        device_str = str(self.device)
         if use_qlora:
             bnb_config = BitsAndBytesConfig(
                 load_in_4bit=True,
@@ -48,8 +58,10 @@ class ModelAdapter(nn.Module):
                 num_labels=num_labels,
                 use_safetensors=use_safetensors,
                 quantization_config=bnb_config,
+                device_map={"": device_str},
                 trust_remote_code=True,
             )
+            # Prep for k‑bit QLoRA training
             base_model = prepare_model_for_kbit_training(base_model)
         else:
             base_model = AutoModelForSequenceClassification.from_pretrained(
@@ -57,12 +69,13 @@ class ModelAdapter(nn.Module):
                 num_labels=num_labels,
                 use_safetensors=use_safetensors,
                 torch_dtype=torch.float16,
+                device_map={"": device_str},
             )
 
-        # Align pad_token_id
+        # Sync the model’s pad_token_id
         base_model.config.pad_token_id = self.tokenizer.pad_token_id
 
-        # Configure LoRA adapter
+        # Configure LoRA
         if use_qlora:
             lora_config = LoraConfig(
                 r=lora_rank,
@@ -82,18 +95,19 @@ class ModelAdapter(nn.Module):
                 lora_dropout=0.1,
             )
 
+        # Attach PEFT LoRA and move everything to self.device
         self.model = get_peft_model(base_model, lora_config)
-        # Move entire model to selected device
         self.model.to(self.device)
         self.model.print_trainable_parameters()
 
+        # Debug prints
         if use_qlora:
-            print(f"✅ Using QLoRA with 4-bit quantization ({quantization_config})")
+            print(f"✅ Loaded QLoRA 4‑bit ({quantization_config}) on {device_str}")
         else:
-            print("⚠️  Using standard LoRA (fp16) — higher memory usage")
+            print(f"⚠️  Loaded fp16 model on {device_str}")
 
     def __call__(self, texts: list[str]):
-        # Tokenize inputs (remains on CPU)
+        # Tokenize on CPU, then move tensors to self.device
         inputs = self.tokenizer(
             texts,
             return_tensors="pt",
@@ -101,14 +115,13 @@ class ModelAdapter(nn.Module):
             truncation=True,
             max_length=self.max_length,
         )
-        # Move tokens to the model's device
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-        # Forward
+        # Forward on the unified device
         outputs = self.model(**inputs)
         return outputs.logits
 
-    def get_memory_footprint(self):
+    def get_memory_footprint(self) -> str:
         """Estimate memory usage in MB."""
         total = sum(p.numel() for p in self.model.parameters())
         if self.use_qlora:
