@@ -51,6 +51,8 @@ class TrainerModule(pl.LightningModule):
         labels = batch["label"]
         
         logits = self(texts)
+        # Ensure labels are on the same device as logits
+        labels = labels.to(logits.device)
         loss = F.cross_entropy(logits, labels)
         
         # Log metrics

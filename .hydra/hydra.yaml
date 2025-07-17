@@ -128,7 +128,7 @@ hydra:
         exclude_keys: []
   runtime:
     version: 1.3.2
-    version_base: '1.1'
+    version_base: '1.3'
     cwd: /Users/mac/Ulster/toolkit
     config_sources:
     - path: hydra.conf
