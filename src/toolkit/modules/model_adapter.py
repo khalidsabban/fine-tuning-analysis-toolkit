@@ -16,7 +16,7 @@ class ModelAdapter(nn.Module):
         lora_rank: int = 16,
         use_qlora: bool = True,
         use_safetensors: bool = True,
-        quantization_config: str = "nf4",  # now accepted from your Hydra config
+        quantization_config: str = "nf4",  # from Hydra config
         max_length: int = 512,
     ):
         super().__init__()
@@ -35,9 +35,12 @@ class ModelAdapter(nn.Module):
             base_model_name,
             use_fast=True,
         )
+        # Ensure pad token is defined (GPT2 lacks one by default)
+        if self.tokenizer.pad_token_id is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
 
         if use_qlora:
-            # Build 4-bit quantization config using the passed string
+            # Build 4-bit quantization config
             bnb_config = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_quant_type=quantization_config,
@@ -54,8 +57,7 @@ class ModelAdapter(nn.Module):
                 device_map=device_map,
                 trust_remote_code=True,
             )
-
-            # Prepare for k-bit training (QLoRA)
+            # Prepare for QLoRA training
             base_model = prepare_model_for_kbit_training(base_model)
         else:
             # Standard (fp16) load onto one device
@@ -67,7 +69,7 @@ class ModelAdapter(nn.Module):
                 device_map=device_map,
             )
 
-        # Make sure pad token is defined
+        # Align model pad token with tokenizer
         base_model.config.pad_token_id = self.tokenizer.pad_token_id
 
         # Configure LoRA adapter
@@ -101,7 +103,7 @@ class ModelAdapter(nn.Module):
             print("⚠️  Using standard LoRA (fp16) — higher memory usage")
 
     def __call__(self, texts: list[str]):
-        # Tokenize (remains on CPU so HF's device_map can stream shards)
+        # Tokenize (includes pad_token now)
         inputs = self.tokenizer(
             texts,
             return_tensors="pt",
