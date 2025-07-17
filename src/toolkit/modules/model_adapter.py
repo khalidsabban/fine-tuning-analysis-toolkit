@@ -8,6 +8,7 @@ import torch.nn as nn
 class ModelAdapter(nn.Module):
     """
     Wraps a HuggingFace model with optional QLoRA via PEFT and BitsAndBytesConfig.
+    Ensures the entire model and inputs reside on the same device.
     """
     def __init__(
         self,
@@ -16,60 +17,49 @@ class ModelAdapter(nn.Module):
         lora_rank: int = 16,
         use_qlora: bool = True,
         use_safetensors: bool = True,
-        quantization_config: str = "nf4",  # from Hydra config
+        quantization_config: str = "nf4",
         max_length: int = 512,
     ):
         super().__init__()
         self.max_length = max_length
         self.use_qlora = use_qlora
 
-        # Determine a single-device map so everything stays on cuda:0 (or CPU)
-        device_map = (
-            {"": f"cuda:{torch.cuda.current_device()}"} 
-            if torch.cuda.is_available() 
-            else {"": "cpu"}
-        )
+        # Select device
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Load tokenizer
+        # Load tokenizer and ensure a pad token
         self.tokenizer = AutoTokenizer.from_pretrained(
             base_model_name,
             use_fast=True,
         )
-        # Ensure pad token is defined (GPT2 lacks one by default)
-        if self.tokenizer.pad_token_id is None:
+        if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
+        # Load base model
         if use_qlora:
-            # Build 4-bit quantization config
             bnb_config = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_quant_type=quantization_config,
                 bnb_4bit_use_double_quant=True,
                 bnb_4bit_compute_dtype=torch.float16,
             )
-
-            # Load the base model in 4-bit onto one device
             base_model = AutoModelForSequenceClassification.from_pretrained(
                 base_model_name,
                 num_labels=num_labels,
                 use_safetensors=use_safetensors,
                 quantization_config=bnb_config,
-                device_map=device_map,
                 trust_remote_code=True,
             )
-            # Prepare for QLoRA training
             base_model = prepare_model_for_kbit_training(base_model)
         else:
-            # Standard (fp16) load onto one device
             base_model = AutoModelForSequenceClassification.from_pretrained(
                 base_model_name,
                 num_labels=num_labels,
                 use_safetensors=use_safetensors,
                 torch_dtype=torch.float16,
-                device_map=device_map,
             )
 
-        # Align model pad token with tokenizer
+        # Align pad_token_id
         base_model.config.pad_token_id = self.tokenizer.pad_token_id
 
         # Configure LoRA adapter
@@ -92,18 +82,18 @@ class ModelAdapter(nn.Module):
                 lora_dropout=0.1,
             )
 
-        # Attach LoRA
         self.model = get_peft_model(base_model, lora_config)
+        # Move entire model to selected device
+        self.model.to(self.device)
         self.model.print_trainable_parameters()
 
-        # Log summary
         if use_qlora:
             print(f"✅ Using QLoRA with 4-bit quantization ({quantization_config})")
         else:
             print("⚠️  Using standard LoRA (fp16) — higher memory usage")
 
     def __call__(self, texts: list[str]):
-        # Tokenize (includes pad_token now)
+        # Tokenize inputs (remains on CPU)
         inputs = self.tokenizer(
             texts,
             return_tensors="pt",
@@ -112,8 +102,7 @@ class ModelAdapter(nn.Module):
             max_length=self.max_length,
         )
         # Move tokens to the model's device
-        device = next(self.model.parameters()).device
-        inputs = {k: v.to(device) for k, v in inputs.items()}
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
         # Forward
         outputs = self.model(**inputs)
