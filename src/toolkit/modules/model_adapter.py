@@ -117,6 +117,9 @@ class ModelAdapter(nn.Module):
             print(f"⚠️  Loaded Llama-2 fp16 model on {device_str}")
 
     def __call__(self, texts: list[str]):
+        # Ensure model is on the correct device
+        self.model.to(self.device)
+        
         # Tokenize on CPU, then move tensors to self.device
         inputs = self.tokenizer(
             texts,
@@ -125,10 +128,18 @@ class ModelAdapter(nn.Module):
             truncation=True,
             max_length=self.max_length,
         )
+        
+        # Move all input tensors to the model's device
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
-
-        # Forward on the unified device
+        
+        # Ensure model is in the correct mode (eval during evaluation)
+        # Forward pass on the unified device
         outputs = self.model(**inputs)
+        
+        # Ensure output is on the same device
+        if outputs.logits.device != self.device:
+            outputs.logits = outputs.logits.to(self.device)
+            
         return outputs.logits
 
     def get_memory_footprint(self) -> str:
