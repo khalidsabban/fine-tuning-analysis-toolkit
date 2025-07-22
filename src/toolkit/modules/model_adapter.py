@@ -6,6 +6,8 @@ from transformers import (
     AutoModelForSequenceClassification,
     AutoTokenizer,
     BitsAndBytesConfig,
+    LlamaTokenizer,
+    LlamaForSequenceClassification,
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
@@ -16,7 +18,7 @@ class ModelAdapter(nn.Module):
     """
     def __init__(
         self,
-        base_model_name: str = "gpt2",
+        base_model_name: str = "NousResearch/Llama-2-7b-chat-hf",
         num_labels: int = 2,
         lora_rank: int = 16,
         learning_rate: float = 2e-4,
@@ -28,6 +30,7 @@ class ModelAdapter(nn.Module):
         super().__init__()
         self.max_length = max_length
         self.use_qlora   = use_qlora
+        self.base_model_name = base_model_name
 
         # Decide the single device we load onto.
         self.device = (
@@ -36,13 +39,17 @@ class ModelAdapter(nn.Module):
             else torch.device("cpu")
         )
 
-        # Load tokenizer and ensure pad_token is set
+        # Load tokenizer - Llama models need special handling
         self.tokenizer = AutoTokenizer.from_pretrained(
-            base_model_name, use_fast=True
+            base_model_name, 
+            use_fast=False,  # Llama tokenizers work better with use_fast=False
+            trust_remote_code=True
         )
+        
+        # Set pad token for Llama (it doesn't have one by default)
         if self.tokenizer.pad_token is None:
-            # GPT‑style models often lack a pad token; use eos
             self.tokenizer.pad_token = self.tokenizer.eos_token
+            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
 
         # Build the model (quantized or fp16) with a one‐to‐one device_map
         device_str = str(self.device)
@@ -60,6 +67,7 @@ class ModelAdapter(nn.Module):
                 quantization_config=bnb_config,
                 device_map={"": device_str},
                 trust_remote_code=True,
+                use_auth_token=True,  # Required for Llama models
             )
             # Prep for k‑bit QLoRA training
             base_model = prepare_model_for_kbit_training(base_model)
@@ -70,17 +78,19 @@ class ModelAdapter(nn.Module):
                 use_safetensors=use_safetensors,
                 torch_dtype=torch.float16,
                 device_map={"": device_str},
+                trust_remote_code=True,
+                use_auth_token=True,  # Required for Llama models
             )
 
-        # Sync the model’s pad_token_id
+        # Sync the model's pad_token_id
         base_model.config.pad_token_id = self.tokenizer.pad_token_id
 
-        # Configure LoRA
+        # Configure LoRA for Llama-2 (different target modules than GPT-2)
         if use_qlora:
             lora_config = LoraConfig(
                 r=lora_rank,
                 lora_alpha=32,
-                target_modules=["c_attn", "c_proj"],
+                target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
                 bias="none",
                 task_type="SEQ_CLS",
                 lora_dropout=0.1,
@@ -89,7 +99,7 @@ class ModelAdapter(nn.Module):
             lora_config = LoraConfig(
                 r=max(1, lora_rank // 2),
                 lora_alpha=16,
-                target_modules=["c_attn", "c_proj"],
+                target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
                 bias="none",
                 task_type="SEQ_CLS",
                 lora_dropout=0.1,
@@ -102,9 +112,9 @@ class ModelAdapter(nn.Module):
 
         # Debug prints
         if use_qlora:
-            print(f"✅ Loaded QLoRA 4‑bit ({quantization_config}) on {device_str}")
+            print(f"✅ Loaded Llama-2 QLoRA 4‑bit ({quantization_config}) on {device_str}")
         else:
-            print(f"⚠️  Loaded fp16 model on {device_str}")
+            print(f"⚠️  Loaded Llama-2 fp16 model on {device_str}")
 
     def __call__(self, texts: list[str]):
         # Tokenize on CPU, then move tensors to self.device
@@ -127,7 +137,9 @@ class ModelAdapter(nn.Module):
         if self.use_qlora:
             trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
             base = total - trainable
+            # 4-bit quantization uses ~0.5 bytes per parameter for base model
             mb = (base * 0.5 + trainable * 4) / (1024**2)
         else:
             mb = (total * 2) / (1024**2)
         return f"~{mb:.1f} MB"
+    

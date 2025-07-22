@@ -1,9 +1,9 @@
-# config/config.yaml - QLoRA Configuration
+# config/config.yaml - QLoRA Configuration for Llama-2
 defaults:
   - _self_
 
 model:
-  name: gpt2
+  name: NousResearch/Llama-2-7b-chat-hf
   num_labels: 2
   lora_rank: 8  # Can use higher rank with QLoRA & Smaller rank = faster
   use_qlora: true
@@ -11,9 +11,9 @@ model:
 
 training:
   max_steps: 10 # 1000
-  batch_size: 8  # Can use larger batch size with QLoRA
+  batch_size: 4  # Reduced batch size for larger model
   learning_rate: 2e-4  # Slightly higher LR often works better with QLoRA
-  gradient_accumulation_steps: 2
+  gradient_accumulation_steps: 4  # Increased to compensate for smaller batch
   gradient_checkpointing: true
   use_mixed_precision: true
 
@@ -23,11 +23,11 @@ data:
   text_field: "text"
   label_field: "label"
   num_workers: 2
-  max_length: 128  # Can handle longer sequences & shorter sequences = faster training
+  max_length: 512  # Llama can handle longer sequences
 
 carbon:
   tracker:
-    project_name: gpt2_qlora_test
+    project_name: llama2_qlora_test
     output_dir: carbon_logs
 
 eval:

@@ -5,11 +5,11 @@ from toolkit.modules.model_adapter import ModelAdapter
 
 class TrainerModule(pl.LightningModule):
     """
-    Lightning module wrapping ModelAdapter with QLoRA support.
+    Lightning module wrapping ModelAdapter with QLoRA support for Llama-2.
     """
     def __init__(
         self,
-        base_model_name: str = "gpt2",
+        base_model_name: str = "NousResearch/Llama-2-7b-chat-hf",
         num_labels: int = 2,
         lora_rank: int = 16,
         learning_rate: float = 2e-4,
@@ -43,7 +43,7 @@ class TrainerModule(pl.LightningModule):
             print("✅ Gradient checkpointing enabled")
 
     def forward(self, texts: list[str]):
-        # FIXED: Use the adapter's __call__ method which handles device management correctly
+        # Use the adapter's __call__ method which handles device management correctly
         return self.adapter(texts)
 
     def training_step(self, batch, batch_idx):
@@ -59,16 +59,20 @@ class TrainerModule(pl.LightningModule):
         self.log("train_loss", loss, prog_bar=True)
         
         # Log memory usage periodically
-        if batch_idx % 100 == 0 and torch.cuda.is_available():
+        if batch_idx % 50 == 0 and torch.cuda.is_available():  # More frequent for Llama
             memory_used = torch.cuda.memory_allocated() / 1024**3
             memory_reserved = torch.cuda.memory_reserved() / 1024**3
             self.log("memory_used_gb", memory_used)
             self.log("memory_reserved_gb", memory_reserved)
+            
+            # Print memory usage for monitoring
+            if batch_idx % 100 == 0:
+                print(f"Step {batch_idx}: Memory used: {memory_used:.2f}GB, Reserved: {memory_reserved:.2f}GB")
         
         return loss
 
     def configure_optimizers(self):
-        # For QLoRA, we typically use AdamW with specific settings
+        # For QLoRA with Llama-2, we use specific optimizer settings
         if self.use_qlora:
             # Only optimize the trainable parameters (LoRA adapters)
             trainable_params = [p for p in self.adapter.model.parameters() if p.requires_grad]
@@ -81,7 +85,7 @@ class TrainerModule(pl.LightningModule):
                 eps=1e-8,
             )
 
-            # Learning rate scheduler
+            # Cosine annealing scheduler works well with Llama models
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
                 T_max=self.trainer.max_steps,
@@ -105,13 +109,20 @@ class TrainerModule(pl.LightningModule):
 
     def on_train_start(self):
         """Called when training starts"""
-        print("🚀 Training started with QLoRA" if self.use_qlora else "🚀 Training started with standard LoRA")
+        model_name = "QLoRA Llama-2" if self.use_qlora else "Standard LoRA Llama-2"
+        print(f"🚀 Training started with {model_name}")
+        
+        if torch.cuda.is_available():
+            print(f"🎯 Using GPU: {torch.cuda.get_device_name()}")
+            print(f"💾 GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
 
     def validation_step(self, batch, batch_idx):
         texts = batch["text"]
         labels = batch["label"]
         
         logits = self(texts)
+        # Ensure labels are on the same device as logits
+        labels = labels.to(logits.device)
         loss = F.cross_entropy(logits, labels)
         
         # Calculate accuracy
@@ -122,4 +133,14 @@ class TrainerModule(pl.LightningModule):
         self.log("val_acc", acc, prog_bar=True)
         
         return loss
-    
+
+    def on_train_epoch_end(self):
+        """Called at the end of each training epoch"""
+        if torch.cuda.is_available():
+            # Clear cache to prevent memory buildup
+            torch.cuda.empty_cache()
+            
+            current_memory = torch.cuda.memory_allocated() / 1024**3
+            peak_memory = torch.cuda.max_memory_allocated() / 1024**3
+            print(f"📊 End of epoch - Current: {current_memory:.2f}GB, Peak: {peak_memory:.2f}GB")
+            
