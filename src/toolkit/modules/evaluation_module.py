@@ -22,6 +22,7 @@ class EvaluationModule:
             device: Target device (if None, uses model's device)
         """
         self.model_adapter = model_adapter
+        # Get device from the model adapter directly
         self.device = device or self.model_adapter.device
         
         # Ensure model is on the correct device
@@ -46,10 +47,17 @@ class EvaluationModule:
         
         with torch.no_grad():
             try:
-                # Get model predictions (ModelAdapter handles device placement for inputs)
+                # Move labels to the correct device first
+                labels = labels.to(self.device)
+                
+                # Get model predictions - ModelAdapter handles tokenization and device placement
                 logits = self.model_adapter(texts)
                 
-                # Ensure labels are on the same device as logits
+                # Double-check that logits are on the right device
+                if logits.device != self.device:
+                    logits = logits.to(self.device)
+                
+                # Ensure labels and logits are on the same device
                 if labels.device != logits.device:
                     labels = labels.to(logits.device)
                 
@@ -84,10 +92,15 @@ class EvaluationModule:
                     print(f"❌ Device mismatch error in evaluation: {e}")
                     print(f"Model device: {next(self.model_adapter.model.parameters()).device}")
                     print(f"Labels device: {labels.device}")
-                    # Try to fix by moving everything to the model's device
-                    model_device = next(self.model_adapter.model.parameters()).device
-                    labels = labels.to(model_device)
-                    logits = self.model_adapter(texts)
+                    print(f"Target device: {self.device}")
+                    
+                    # Debug information
+                    print("🔍 Debugging device information:")
+                    for name, param in self.model_adapter.model.named_parameters():
+                        if param.requires_grad:  # Only print trainable params to avoid spam
+                            print(f"  {name}: {param.device}")
+                            break  # Just print one example
+                    
                     raise e
                 else:
                     raise e
@@ -105,12 +118,13 @@ class EvaluationModule:
         """
         print(f"🔍 Starting evaluation on device: {self.device}")
         
+        # Ensure model is in eval mode and on correct device
+        self.model_adapter.model.eval()
+        self.model_adapter.model.to(self.device)
+        
         all_losses = []
         all_predictions = []
         all_labels = []
-        
-        # Ensure model is in eval mode
-        self.model_adapter.model.eval()
         
         with torch.no_grad():
             progress_bar = tqdm(dataloader, desc="Evaluating", unit="batch")
@@ -122,6 +136,14 @@ class EvaluationModule:
                 try:
                     texts = batch["text"]
                     labels = batch["label"]
+                    
+                    # Debug: Print batch information for first batch
+                    if batch_idx == 0:
+                        print(f"🔍 First batch debug:")
+                        print(f"  Texts type: {type(texts)}, length: {len(texts) if isinstance(texts, (list, tuple)) else 'N/A'}")
+                        print(f"  Labels shape: {labels.shape}, device: {labels.device}, dtype: {labels.dtype}")
+                        print(f"  Model device: {next(self.model_adapter.model.parameters()).device}")
+                        print(f"  Target device: {self.device}")
                     
                     # Evaluate this batch
                     batch_results = self.evaluate_batch(texts, labels)
@@ -140,9 +162,10 @@ class EvaluationModule:
                     
                 except Exception as e:
                     print(f"❌ Error evaluating batch {batch_idx}: {e}")
-                    print(f"Batch text types: {type(texts)}, length: {len(texts) if isinstance(texts, list) else 'N/A'}")
+                    print(f"Batch text types: {type(texts)}, length: {len(texts) if isinstance(texts, (list, tuple)) else 'N/A'}")
                     print(f"Batch label shape: {labels.shape if hasattr(labels, 'shape') else 'N/A'}")
                     print(f"Batch label device: {labels.device if hasattr(labels, 'device') else 'N/A'}")
+                    print(f"Model device: {next(self.model_adapter.model.parameters()).device}")
                     raise e
         
         # Calculate final aggregated metrics
