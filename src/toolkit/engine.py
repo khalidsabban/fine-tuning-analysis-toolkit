@@ -1,6 +1,7 @@
 # Add this to your engine.py where you do post-training evaluation
 
 from toolkit.modules.evaluation_module import evaluate_model
+import torch
 
 def run_post_training_evaluation(trainer_module, test_dataloader):
     """
