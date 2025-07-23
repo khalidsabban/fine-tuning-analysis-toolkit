@@ -10,7 +10,7 @@ model:
   quantization_config: "nf4"  # Options: "nf4" (recommended) or "fp4"
 
 training:
-  max_steps: 1000 # 1000
+  max_steps: 100 # 1000
   max_epochs: 5
   batch_size: 4  # Reduced batch size for larger model
   learning_rate: 2e-4  # Slightly higher LR often works better with QLoRA
