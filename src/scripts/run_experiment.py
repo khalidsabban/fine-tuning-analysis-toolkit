@@ -107,6 +107,7 @@ def main(cfg: DictConfig) -> None:
             enable_progress_bar=True,
             precision=16 if cfg.training.get('use_mixed_precision', True) else 32,
             gradient_clip_val=1.0,
+            gradient_clip_algorithm='norm',
             accumulate_grad_batches=cfg.training.get('gradient_accumulation_steps', 1),
             deterministic=False,
             benchmark=True,

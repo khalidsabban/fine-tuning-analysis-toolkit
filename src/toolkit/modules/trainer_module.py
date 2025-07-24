@@ -12,7 +12,7 @@ class TrainerModule(pl.LightningModule):
         base_model_name: str = "NousResearch/Llama-2-7b-chat-hf",
         num_labels: int = 2,
         lora_rank: int = 16,
-        learning_rate: float = 5e-5,  # 🔧 FIXED: Reduced from 2e-4
+        learning_rate: float = 1e-5, 
         gradient_checkpointing: bool = True,
         use_qlora: bool = True,
         quantization_config: str = "nf4",
