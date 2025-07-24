@@ -11,7 +11,7 @@ model:
 
 training:
   max_steps: -1 # Use epochs instead
-  max_epochs: 10   
+  max_epochs: 2   
   batch_size: 4   # Reduced batch size for larger model
   learning_rate: 1e-5  # Slightly higher LR often works better with QLoRA
   gradient_accumulation_steps: 4  # Increased to compensate for smaller batch
@@ -20,7 +20,7 @@ training:
 
 data:
   dataset_name: sst2
-  split: "train[:10%]"  # 🔧 FIXED: Reduced to 5% to ensure we have enough steps for debugging
+  split: "train[:5%]"  # 🔧 FIXED: Reduced to 5% to ensure we have enough steps for debugging
   text_field: "sentence"
   label_field: "label"
   num_workers: 2
