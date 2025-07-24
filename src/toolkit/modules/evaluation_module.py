@@ -134,7 +134,7 @@ class EvaluationModule:
                     break
                 
                 try:
-                    texts = batch["text"]
+                    texts = batch["sentence"]
                     labels = batch["label"]
                     
                     # Debug: Print batch information for first batch

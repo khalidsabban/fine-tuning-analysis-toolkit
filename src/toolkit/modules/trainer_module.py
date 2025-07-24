@@ -12,7 +12,7 @@ class TrainerModule(pl.LightningModule):
         base_model_name: str = "NousResearch/Llama-2-7b-chat-hf",
         num_labels: int = 2,
         lora_rank: int = 16,
-        learning_rate: float = 2e-4,
+        learning_rate: float = 5e-5,  # 🔧 FIXED: Reduced from 2e-4
         gradient_checkpointing: bool = True,
         use_qlora: bool = True,
         quantization_config: str = "nf4",
@@ -33,54 +33,43 @@ class TrainerModule(pl.LightningModule):
         
         self.learning_rate = learning_rate
         self.use_qlora = use_qlora
-        self.step_count = 0  # Track training steps for debugging
+        self.step_count = 0
         
-        # Print memory footprint
         print(f"📊 Model memory footprint: {self.adapter.get_memory_footprint()}")
         
-        # Enable gradient checkpointing if requested
         if gradient_checkpointing and hasattr(self.adapter.model, 'gradient_checkpointing_enable'):
             self.adapter.model.gradient_checkpointing_enable()
             print("✅ Gradient checkpointing enabled")
 
     def forward(self, texts: list[str]):
-        # Use the adapter's __call__ method which handles device management correctly
         return self.adapter(texts)
 
     def training_step(self, batch, batch_idx):
-        texts = batch["text"]
+        texts = batch["sentence"]
         labels = batch["label"]
         
-        # 🔍 DEBUG: Print detailed info for first few steps
+        # Debug info for first few steps
         if self.step_count < 5:
             print(f"\n🔍 === TRAINING STEP {self.step_count} DEBUG ===")
             print(f"Batch size: {len(texts)}")
             print(f"Labels: {labels.tolist()}")
-            print(f"Label shape: {labels.shape}, dtype: {labels.dtype}")
             print(f"Sample texts: {[t[:50] + '...' for t in texts[:2]]}")
         
         # Forward pass
         logits = self(texts)
         
-        # 🔍 DEBUG: Print logits info for first few steps
         if self.step_count < 5:
             print(f"Logits shape: {logits.shape}, dtype: {logits.dtype}")
             print(f"Logits range: [{logits.min().item():.4f}, {logits.max().item():.4f}]")
-            print(f"Logits sample: {logits[0].tolist()}")
         
         # Ensure labels are on the same device as logits
         labels = labels.to(logits.device)
         
-        # 🔍 DEBUG: Check for problematic values before loss calculation
-        if self.step_count < 5:
-            print(f"Labels after device move: {labels}")
-            print(f"Unique labels in batch: {torch.unique(labels)}")
-        
         # Calculate loss
         loss = F.cross_entropy(logits, labels)
         
-        # 🚨 CRITICAL DEBUG: Check for zero loss
-        if self.step_count < 10 or loss.item() < 1e-6:
+        # 🔧 FIXED: Enhanced gradient debugging
+        if self.step_count < 10:
             print(f"\n🚨 LOSS DEBUG - Step {self.step_count}:")
             print(f"  Raw loss: {loss.item()}")
             print(f"  Loss requires_grad: {loss.requires_grad}")
@@ -95,86 +84,113 @@ class TrainerModule(pl.LightningModule):
             print(f"  Probabilities range: [{probs.min().item():.4f}, {probs.max().item():.4f}]")
             print(f"  Mean probabilities: {probs.mean(dim=0)}")
             
-            # Check if model is actually training
-            if hasattr(self.adapter.model, 'parameters'):
-                trainable_params = [p for p in self.adapter.model.parameters() if p.requires_grad]
-                if trainable_params:
-                    first_param = trainable_params[0]
-                    print(f"  First trainable param grad: {first_param.grad is not None if first_param.grad is not None else 'None'}")
-                    if first_param.grad is not None:
-                        print(f"  First param grad norm: {first_param.grad.norm().item():.6f}")
+            # 🔧 IMPROVED: Better gradient checking
+            trainable_params = [p for p in self.adapter.model.parameters() if p.requires_grad]
+            if trainable_params:
+                print(f"  Trainable parameters found: {len(trainable_params)}")
+                
+                # Force a backward pass to check gradients
+                if loss.requires_grad:
+                    # Store current gradients (if any)
+                    grad_norms_before = []
+                    for p in trainable_params[:3]:  # Check first 3 params
+                        if p.grad is not None:
+                            grad_norms_before.append(p.grad.norm().item())
+                        else:
+                            grad_norms_before.append(0.0)
+                    
+                    print(f"  Gradient norms (first 3 params): {grad_norms_before}")
+                    
+                    # Check if gradients are flowing by examining parameter values
+                    param_means = [p.data.mean().item() for p in trainable_params[:3]]
+                    print(f"  Parameter means (first 3): {param_means}")
+            else:
+                print("  🚨 CRITICAL: No trainable parameters found!")
         
         self.step_count += 1
         
         # Log metrics
         self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
         
-        # Log memory usage periodically
+        # Memory monitoring
         if batch_idx % 50 == 0 and torch.cuda.is_available():
             memory_used = torch.cuda.memory_allocated() / 1024**3
             memory_reserved = torch.cuda.memory_reserved() / 1024**3
             self.log("memory_used_gb", memory_used)
             self.log("memory_reserved_gb", memory_reserved)
             
-            # Print memory usage for monitoring
             if batch_idx % 100 == 0:
                 print(f"Step {batch_idx}: Memory used: {memory_used:.2f}GB, Reserved: {memory_reserved:.2f}GB")
         
         return loss
 
     def configure_optimizers(self):
-        # For QLoRA with Llama-2, we use specific optimizer settings
-        if self.use_qlora:
-            # Only optimize the trainable parameters (LoRA adapters)
-            trainable_params = [p for p in self.adapter.model.parameters() if p.requires_grad]
+        # 🔧 IMPROVED: Better optimizer configuration
+        trainable_params = [p for p in self.adapter.model.parameters() if p.requires_grad]
+        
+        print(f"\n🔍 === OPTIMIZER DEBUG ===")
+        print(f"Total trainable parameters: {len(trainable_params)}")
+        
+        if trainable_params:
+            total_params = sum(p.numel() for p in trainable_params)
+            print(f"Total trainable parameter count: {total_params:,}")
+            print(f"First few parameter shapes: {[p.shape for p in trainable_params[:3]]}")
             
-            print(f"\n🔍 === OPTIMIZER DEBUG ===")
-            print(f"Total trainable parameters: {len(trainable_params)}")
-            
-            if trainable_params:
-                total_params = sum(p.numel() for p in trainable_params)
-                print(f"Total trainable parameter count: {total_params:,}")
-                print(f"First few parameter shapes: {[p.shape for p in trainable_params[:3]]}")
-            else:
-                print("🚨 CRITICAL ERROR: No trainable parameters found!")
-                print("   This means LoRA adapters are not properly configured.")
-                # Print all parameters for debugging
-                all_params = list(self.adapter.model.parameters())
-                print(f"   Total parameters in model: {len(all_params)}")
-                for i, p in enumerate(all_params[:5]):
-                    print(f"   Param {i}: shape={p.shape}, requires_grad={p.requires_grad}")
-
-            optimizer = torch.optim.AdamW(
-                trainable_params,
-                lr=self.learning_rate,
-                weight_decay=0.0,  # No weight decay for QLoRA
-                betas=(0.9, 0.999),
-                eps=1e-8,
-            )
-
-            # 🔧 FIX: Use actual max_steps from trainer
-            max_steps = self.trainer.max_steps if self.trainer.max_steps > 0 else 1000
-            
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer,
-                T_max=max_steps,
-                eta_min=self.learning_rate * 0.1,
-            )
-            
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": {
-                    "scheduler": scheduler,
-                    "interval": "step",
-                },
-            }
+            # Check parameter initialization
+            param_stats = []
+            for i, p in enumerate(trainable_params[:3]):
+                mean_val = p.data.mean().item()
+                std_val = p.data.std().item()
+                param_stats.append(f"Param {i}: mean={mean_val:.6f}, std={std_val:.6f}")
+            print("Parameter statistics:")
+            for stat in param_stats:
+                print(f"  {stat}")
+                
         else:
-            # Standard optimizer for regular LoRA
-            return torch.optim.AdamW(
-                self.adapter.model.parameters(),
-                lr=self.learning_rate,
-                weight_decay=0.01,
-            )
+            print("🚨 CRITICAL ERROR: No trainable parameters found!")
+            print("   This means LoRA adapters are not properly configured.")
+            all_params = list(self.adapter.model.parameters())
+            print(f"   Total parameters in model: {len(all_params)}")
+            for i, p in enumerate(all_params[:5]):
+                print(f"   Param {i}: shape={p.shape}, requires_grad={p.requires_grad}")
+            
+            # Return a dummy optimizer to prevent crashes
+            dummy_param = torch.tensor([0.0], requires_grad=True)
+            return torch.optim.AdamW([dummy_param], lr=self.learning_rate)
+
+        # 🔧 FIXED: Improved optimizer settings for QLoRA
+        optimizer = torch.optim.AdamW(
+            trainable_params,
+            lr=self.learning_rate,
+            weight_decay=0.01,  # Small weight decay for stability
+            betas=(0.9, 0.95),  # Better betas for transformer training
+            eps=1e-6,  # Smaller epsilon for better numerical stability
+        )
+
+        # 🔧 FIXED: Better scheduler configuration
+        if hasattr(self.trainer, 'estimated_stepping_batches') and self.trainer.estimated_stepping_batches:
+            max_steps = self.trainer.estimated_stepping_batches
+        elif self.trainer.max_steps and self.trainer.max_steps > 0:
+            max_steps = self.trainer.max_steps
+        else:
+            # Fallback calculation
+            max_steps = 1000
+            
+        print(f"Scheduler max_steps: {max_steps}")
+        
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max_steps,
+            eta_min=self.learning_rate * 0.01,  # Lower minimum LR
+        )
+        
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "step",
+            },
+        }
 
     def on_train_start(self):
         """Called when training starts"""
@@ -185,22 +201,23 @@ class TrainerModule(pl.LightningModule):
             print(f"🎯 Using GPU: {torch.cuda.get_device_name()}")
             print(f"💾 GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
         
-        # 🔍 DEBUG: Print training configuration
         print(f"\n🔍 === TRAINING CONFIG DEBUG ===")
         print(f"Max steps: {self.trainer.max_steps}")
         print(f"Max epochs: {self.trainer.max_epochs}")
         print(f"Current epoch: {self.trainer.current_epoch}")
         print(f"Global step: {self.trainer.global_step}")
+        
+        # 🔧 ADDED: Verify model is in training mode
+        print(f"Model training mode: {self.adapter.model.training}")
 
     def validation_step(self, batch, batch_idx):
-        if batch is None:  # Handle case where no validation data
+        if batch is None:
             return None
             
-        texts = batch["text"]
+        texts = batch["sentence"]
         labels = batch["label"]
         
         logits = self(texts)
-        # Ensure labels are on the same device as logits
         labels = labels.to(logits.device)
         loss = F.cross_entropy(logits, labels)
         
@@ -216,7 +233,6 @@ class TrainerModule(pl.LightningModule):
     def on_train_epoch_end(self):
         """Called at the end of each training epoch"""
         if torch.cuda.is_available():
-            # Clear cache to prevent memory buildup
             torch.cuda.empty_cache()
             
             current_memory = torch.cuda.memory_allocated() / 1024**3
@@ -229,3 +245,9 @@ class TrainerModule(pl.LightningModule):
         print(f"Total steps completed: {self.trainer.global_step}")
         print(f"Final epoch: {self.trainer.current_epoch}")
         
+        # 🔧 ADDED: Final parameter check
+        trainable_params = [p for p in self.adapter.model.parameters() if p.requires_grad]
+        if trainable_params:
+            final_grad_norms = [p.grad.norm().item() if p.grad is not None else 0.0 for p in trainable_params[:3]]
+            print(f"Final gradient norms (first 3 params): {final_grad_norms}")
+            

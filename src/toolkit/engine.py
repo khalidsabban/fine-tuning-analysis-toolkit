@@ -2,6 +2,7 @@
 
 from toolkit.modules.evaluation_module import evaluate_model
 import torch
+from torch.nn import F
 
 def run_post_training_evaluation(trainer_module, test_dataloader):
     """

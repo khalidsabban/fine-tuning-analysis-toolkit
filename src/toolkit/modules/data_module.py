@@ -10,9 +10,9 @@ class HFDataModule(pl.LightningDataModule):
     """
     def __init__(
         self,
-        dataset_name: str = "imdb",
-        split: str = "train[:10%]",
-        text_field: str = "text",
+        dataset_name: str = "sst2",
+        split: str = "train",
+        text_field: str = "sentence",
         label_field: str = "label",
         batch_size: int = 8,
         num_workers: int = 4,
