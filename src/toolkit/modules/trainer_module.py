@@ -45,7 +45,7 @@ class TrainerModule(pl.LightningModule):
         return self.adapter(texts)
 
     def training_step(self, batch, batch_idx):
-        texts = batch["sentence"]
+        texts = batch["text"]
         labels = batch["label"]
         
         # Debug info for first few steps
@@ -214,7 +214,7 @@ class TrainerModule(pl.LightningModule):
         if batch is None:
             return None
             
-        texts = batch["sentence"]
+        texts = batch["text"]
         labels = batch["label"]
         
         logits = self(texts)
