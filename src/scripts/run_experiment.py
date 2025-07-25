@@ -102,7 +102,7 @@ def main(cfg: DictConfig) -> None:
         # 4) Create trainer with optimized settings for Llama-2
         trainer = pl.Trainer(
             max_steps=cfg.training.max_steps,
-            max_epochs  = cfg.training.max_epochs
+            max_epochs  = cfg.training.max_epochs,
             logger=False,
             enable_checkpointing=False,
             enable_progress_bar=True,
