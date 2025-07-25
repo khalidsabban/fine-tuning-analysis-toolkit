@@ -20,7 +20,7 @@ training:
 
 data:
   dataset_name: sst2
-  split: "train[:5%]"  # 🔧 FIXED: Reduced to 5% to ensure we have enough steps for debugging
+  split: "train[:2.5%]"  # 🔧 FIXED: Reduced to 5% to ensure we have enough steps for debugging
   text_field: "sentence"
   label_field: "label"
   num_workers: 2
