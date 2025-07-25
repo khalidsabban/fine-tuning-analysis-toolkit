@@ -34,10 +34,12 @@ carbon:
 
 eval:
   samples:
-    - "My name is khalid."
-    - "I did not enjoy the film."
-    - "This movie was fantastic!"
-    - "I think I will not watch it again."
+    - An absolute triumph of storytelling that kept me hooked from start to finish.
+    - Brilliant performances and a heartwarming finale make this a must‑see.
+    - A visually stunning masterpiece with an unforgettable score.
+    - Heavy on clichés and light on originality, it feels like a tired retread.
+    - Sluggish pacing and wooden acting make this an endurance test.
+    - Dialogue so forced it took me right out of the story.
 
 # QLoRA-specific settings
 qlora:
