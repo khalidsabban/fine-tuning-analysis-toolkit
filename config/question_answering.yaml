@@ -1,0 +1,37 @@
+# config/question_answering.yaml - QA Configuration Override
+defaults:
+  - config
+
+# Override task type
+task:
+  type: "question_answering"
+
+# QA dataset
+data:
+  dataset_name: "squad"
+  split: "train[:5%]"
+  question_field: "question"
+  context_field: "context"
+  answers_field: "answers"
+  max_length: 384  # Shorter for QA to fit question + context
+
+# Adjusted training for QA
+training:
+  batch_size: 2  # Smaller batch size for longer sequences
+  gradient_accumulation_steps: 8  # Compensate with more accumulation
+  learning_rate: 3e-5  # Slightly higher LR for QA
+
+# QA-specific evaluation samples
+eval:
+  qa_samples:
+    - question: "What is the capital of France?"
+      context: "France is a country in Western Europe. Paris is the capital and largest city of France. The city has a population of over 2 million people."
+    - question: "Who wrote Romeo and Juliet?"
+      context: "William Shakespeare was an English playwright and poet. He wrote many famous plays including Romeo and Juliet, Hamlet, and Macbeth during the late 16th and early 17th centuries."
+    - question: "When was the Declaration of Independence signed?"
+      context: "The Declaration of Independence was signed on July 4, 1776, in Philadelphia. It declared the thirteen American colonies independent from British rule."
+
+carbon:
+  tracker:
+    project_name: llama2_qlora_qa_test
+    

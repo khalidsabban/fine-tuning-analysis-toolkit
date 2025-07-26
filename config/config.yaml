@@ -1,31 +1,51 @@
-# config/config.yaml - QLoRA Configuration for Llama-2
+# config/config.yaml - Unified Configuration for Classification and QA
 defaults:
   - _self_
 
+# Task configuration - determines model type and evaluation
+task:
+  type: "classification"  # Options: "classification", "question_answering"
+
 model:
   name: NousResearch/Llama-2-7b-chat-hf
-  num_labels: 2
-  lora_rank: 8  # Can use higher rank with QLoRA & Smaller rank = faster
+  num_labels: 2  # Only used for classification
+  lora_rank: 8
   use_qlora: true
-  quantization_config: "nf4"  # Options: "nf4" (recommended) or "fp4"
+  quantization_config: "nf4"
 
 training:
-  max_steps: -1 # Use epochs instead
+  max_steps: -1
   max_epochs: 2   
-  batch_size: 4   # Reduced batch size for larger model
-  learning_rate: 1e-5  # Slightly higher LR often works better with QLoRA
-  gradient_accumulation_steps: 4  # Increased to compensate for smaller batch
+  batch_size: 4
+  learning_rate: 1e-5
+  gradient_accumulation_steps: 4
   gradient_checkpointing: true
   use_mixed_precision: false
 
 data:
-  dataset_name: sst2
-  split: "train[:2%]"  # 🔧 FIXED: Reduced to 5% to ensure we have enough steps for debugging
-  text_field: "sentence"
-  label_field: "label"
+  # Common settings
+  dataset_name: sst2  # For classification: sst2, for QA: squad
+  split: "train[:2%]"
   num_workers: 2
-  max_length: 512  # Llama can handle longer sequences
-  val_split_ratio: 0.1  # 🔧 ADDED: 10% for validation
+  max_length: 512
+  val_split_ratio: 0.1
+  
+  # Classification-specific fields
+  text_field: "sentence"  # Used when task.type == "classification"
+  label_field: "label"    # Used when task.type == "classification"
+  
+  # QA-specific fields
+  question_field: "question"    # Used when task.type == "question_answering"
+  context_field: "context"     # Used when task.type == "question_answering"
+  answers_field: "answers"     # Used when task.type == "question_answering"
+
+# QA-specific configuration
+qa:
+  max_answer_length: 30     # Maximum tokens in answer
+  doc_stride: 128          # Overlap when splitting long contexts
+  n_best_size: 20         # Number of best answers to consider
+  max_query_length: 64    # Maximum question length
+  null_score_diff_threshold: 0.0  # Threshold for "no answer"
 
 carbon:
   tracker:
@@ -33,20 +53,27 @@ carbon:
     output_dir: carbon_logs
 
 eval:
-  samples:
+  # Classification samples
+  classification_samples:
     - An absolute triumph of storytelling that kept me hooked from start to finish.
     - Brilliant performances and a heartwarming finale make this a must‑see.
     - A visually stunning masterpiece with an unforgettable score.
     - Heavy on clichés and light on originality, it feels like a tired retread.
     - Sluggish pacing and wooden acting make this an endurance test.
     - Dialogue so forced it took me right out of the story.
+  
+  # QA samples
+  qa_samples:
+    - question: "What is the capital of France?"
+      context: "France is a country in Western Europe. Paris is the capital and largest city of France. The city has a population of over 2 million people."
+    - question: "Who wrote Romeo and Juliet?"
+      context: "William Shakespeare was an English playwright and poet. He wrote many famous plays including Romeo and Juliet, Hamlet, and Macbeth during the late 16th and early 17th centuries."
 
 # QLoRA-specific settings
 qlora:
-  nested_quantization: true  # Enable double quantization for extra memory savings
-  compute_dtype: "float16"   # Compute in fp16 for speed
+  nested_quantization: true
+  compute_dtype: "float16"
   
-# To Fix The Error on Google Colab
 hydra:
   run:
     dir: .

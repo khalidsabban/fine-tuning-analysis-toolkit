@@ -25,12 +25,14 @@ warnings.filterwarnings("ignore", category=UserWarning)
 @hydra.main(config_path="../../config", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     """
-    Entry point for fine-tuning Llama-2 with QLoRA on a HuggingFace dataset.
+    Entry point for fine-tuning Llama-2 with QLoRA on classification or QA tasks.
     """
-    print("🔧 Initializing Llama-2 QLoRA experiment...")
+    task_type = cfg.task.type
+    print(f"🔧 Initializing Llama-2 QLoRA experiment for {task_type}...")
     print(f"🎯 Model: {cfg.model.name}")
     print(f"📊 LoRA rank: {cfg.model.lora_rank}")
     print(f"🔢 Quantization: {cfg.model.quantization_config}")
+    print(f"📝 Task: {task_type}")
     
     # Check CUDA availability and memory
     if torch.cuda.is_available():
@@ -39,20 +41,15 @@ def main(cfg: DictConfig) -> None:
         print(f"🎯 CUDA device: {device_name}")
         print(f"💾 Total GPU memory: {total_memory:.2f} GB")
         
-        # For Llama-2-7B, we need at least 8GB GPU memory with QLoRA
         if total_memory < 8:
             print("⚠️  Warning: GPU memory may be insufficient for Llama-2-7B")
-            print("   Consider using a smaller model or reducing batch size/sequence length")
         
-        # Clear cache and set memory fraction
         torch.cuda.empty_cache()
-        torch.cuda.set_per_process_memory_fraction(0.95)  # Use 95% of GPU memory
-        
+        torch.cuda.set_per_process_memory_fraction(0.95)
         initial_memory = torch.cuda.memory_allocated() / 1024**3
         print(f"📊 Initial GPU memory usage: {initial_memory:.2f} GB")
     else:
         print("❌ CUDA not available - Llama-2-7B requires GPU!")
-        print("   This model is too large to run on CPU effectively.")
         return
 
     # 1) Start carbon tracking
@@ -65,21 +62,45 @@ def main(cfg: DictConfig) -> None:
     try:
         # 2) Prepare the HF dataset DataModule
         print("📚 Loading dataset...")
-        dm = HFDataModule(
-            dataset_name=cfg.data.dataset_name,
-            split=cfg.data.split,
-            text_field=cfg.data.text_field,
-            label_field=cfg.data.label_field,
-            batch_size=cfg.training.batch_size,
-            num_workers=cfg.data.num_workers,
-        )
+        
+        if task_type == "classification":
+            dm = HFDataModule(
+                task_type=task_type,
+                dataset_name=cfg.data.dataset_name,
+                split=cfg.data.split,
+                text_field=cfg.data.text_field,
+                label_field=cfg.data.label_field,
+                batch_size=cfg.training.batch_size,
+                num_workers=cfg.data.num_workers,
+                max_length=cfg.data.get('max_length', 512),
+                val_split_ratio=cfg.data.get('val_split_ratio', 0.1),
+            )
+        elif task_type == "question_answering":
+            dm = HFDataModule(
+                task_type=task_type,
+                dataset_name=cfg.data.dataset_name,
+                split=cfg.data.split,
+                question_field=cfg.data.question_field,
+                context_field=cfg.data.context_field,
+                answers_field=cfg.data.answers_field,
+                batch_size=cfg.training.batch_size,
+                num_workers=cfg.data.num_workers,
+                max_length=cfg.data.get('max_length', 384),
+                val_split_ratio=cfg.data.get('val_split_ratio', 0.1),
+                max_answer_length=cfg.qa.get('max_answer_length', 30),
+                doc_stride=cfg.qa.get('doc_stride', 128),
+            )
+        else:
+            raise ValueError(f"Unsupported task type: {task_type}")
+        
         dm.setup()
 
-        # 3) Initialize the TrainerModule with QLoRA
+        # 3) Initialize the TrainerModule
         print("🤖 Loading Llama-2 model...")
         model = TrainerModule(
             base_model_name=cfg.model.name,
-            num_labels=cfg.model.num_labels,
+            task_type=task_type,
+            num_labels=cfg.model.get('num_labels', 2) if task_type == "classification" else None,
             lora_rank=cfg.model.lora_rank,
             learning_rate=cfg.training.learning_rate,
             gradient_checkpointing=cfg.training.get('gradient_checkpointing', True),
@@ -94,15 +115,12 @@ def main(cfg: DictConfig) -> None:
             print(f"📊 Memory after model loading: {model_memory:.2f} GB")
             
             if model_memory > total_memory * 0.8:
-                print("⚠️  High memory usage detected. Consider:")
-                print("   - Reducing max_length")
-                print("   - Using fp4 quantization instead of nf4")
-                print("   - Reducing batch_size further")
+                print("⚠️  High memory usage detected. Consider optimizations.")
 
-        # 4) Create trainer with optimized settings for Llama-2
+        # 4) Create trainer
         trainer = pl.Trainer(
             max_steps=cfg.training.max_steps,
-            max_epochs  = cfg.training.max_epochs,
+            max_epochs=cfg.training.max_epochs,
             logger=False,
             enable_checkpointing=False,
             enable_progress_bar=True,
@@ -112,33 +130,55 @@ def main(cfg: DictConfig) -> None:
             accumulate_grad_batches=cfg.training.get('gradient_accumulation_steps', 1),
             deterministic=False,
             benchmark=True,
-            log_every_n_steps=5,  # More frequent logging for monitoring
-            detect_anomaly=False,  # Disable for performance
+            log_every_n_steps=5,
+            detect_anomaly=False,
         )
 
         # 5) Evaluate *before* training
-        sample_texts = [str(s) for s in cfg.eval.samples]
-        print("\n🔍 === EVALUATION BEFORE TRAINING ===")
+        print(f"\n🔍 === EVALUATION BEFORE TRAINING ({task_type.upper()}) ===")
         
         model.eval()
         with torch.no_grad():
             try:
-                logits_pre = model(sample_texts)
-                probs_pre = F.softmax(logits_pre, dim=-1)
-                preds_pre = torch.argmax(probs_pre, dim=-1)
+                if task_type == "classification":
+                    sample_texts = [str(s) for s in cfg.eval.get('classification_samples', cfg.eval.get('samples', []))]
+                    if sample_texts:
+                        logits_pre = model(sample_texts)
+                        probs_pre = F.softmax(logits_pre, dim=-1)
+                        preds_pre = torch.argmax(probs_pre, dim=-1)
+                        
+                        print("📊 Pre-training classification results:")
+                        for i, (text, prob, pred) in enumerate(zip(sample_texts, probs_pre, preds_pre)):
+                            print(f"  Text: '{text[:50]}...'")
+                            print(f"  Probs: [neg: {prob[0]:.3f}, pos: {prob[1]:.3f}]")
+                            print(f"  Prediction: {'Positive' if pred.item() == 1 else 'Negative'}")
+                            print()
                 
-                print("📊 Pre-training results:")
-                for i, (text, prob, pred) in enumerate(zip(sample_texts, probs_pre, preds_pre)):
-                    print(f"  Text: '{text[:50]}...'")
-                    print(f"  Probs: [neg: {prob[0]:.3f}, pos: {prob[1]:.3f}]")
-                    print(f"  Prediction: {'Positive' if pred.item() == 1 else 'Negative'}")
-                    print()
+                elif task_type == "question_answering":
+                    qa_samples = cfg.eval.get('qa_samples', [])
+                    if qa_samples:
+                        questions = [sample['question'] for sample in qa_samples]
+                        contexts = [sample['context'] for sample in qa_samples]
+                        
+                        qa_inputs = {
+                            'questions': questions,
+                            'contexts': contexts
+                        }
+                        
+                        predicted_answers = model.adapter.extract_answer(qa_inputs)
+                        
+                        print("📊 Pre-training QA results:")
+                        for question, context, pred_answer in zip(questions, contexts, predicted_answers):
+                            print(f"  Question: '{question}'")
+                            print(f"  Context: '{context[:100]}...'")
+                            print(f"  Predicted Answer: '{pred_answer}'")
+                            print()
+                
             except Exception as e:
                 print(f"⚠️  Pre-training evaluation failed: {e}")
-                logits_pre, probs_pre, preds_pre = None, None, None
 
         # 6) Run the training
-        print("\n🚀 === STARTING TRAINING ===")
+        print(f"\n🚀 === STARTING {task_type.upper()} TRAINING ===")
         if torch.cuda.is_available():
             pre_train_memory = torch.cuda.memory_allocated() / 1024**3
             print(f"📊 Memory before training: {pre_train_memory:.2f} GB")
@@ -152,12 +192,11 @@ def main(cfg: DictConfig) -> None:
         except torch.cuda.OutOfMemoryError as e:
             print(f"❌ CUDA OOM Error: {e}")
             print("\n💡 Optimization suggestions:")
-            print("   1. Reduce batch_size from 4 to 2 or 1")
-            print("   2. Increase gradient_accumulation_steps to maintain effective batch size")
-            print("   3. Reduce max_length from 512 to 256 or 128")
+            print("   1. Reduce batch_size")
+            print("   2. Increase gradient_accumulation_steps")
+            print("   3. Reduce max_length")
             print("   4. Try fp4 quantization instead of nf4")
-            print("   5. Reduce lora_rank from 8 to 4")
-            print("   6. Disable gradient checkpointing if memory is critical")
+            print("   5. Reduce lora_rank")
             
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -168,13 +207,10 @@ def main(cfg: DictConfig) -> None:
             if "token" in str(e).lower():
                 print("💡 This might be an authentication error.")
                 print("   Make sure you have access to the Llama-2 model on HuggingFace.")
-                print("   You may need to:")
-                print("   1. Accept the license agreement on the model page")
-                print("   2. Set up your HuggingFace token")
             raise
 
         # 7) Evaluate *after* training
-        print("\n🔍 === EVALUATION AFTER TRAINING ===")
+        print(f"\n🔍 === EVALUATION AFTER TRAINING ({task_type.upper()}) ===")
         
         if torch.cuda.is_available():
             post_train_memory = torch.cuda.memory_allocated() / 1024**3
@@ -183,23 +219,40 @@ def main(cfg: DictConfig) -> None:
         model.eval()
         with torch.no_grad():
             try:
-                logits_post = model(sample_texts)
-                probs_post = F.softmax(logits_post, dim=-1)
-                preds_post = torch.argmax(probs_post, dim=-1)
+                if task_type == "classification":
+                    sample_texts = [str(s) for s in cfg.eval.get('classification_samples', cfg.eval.get('samples', []))]
+                    if sample_texts:
+                        logits_post = model(sample_texts)
+                        probs_post = F.softmax(logits_post, dim=-1)
+                        preds_post = torch.argmax(probs_post, dim=-1)
 
-                print("📊 Post-training results:")
-                for i, (text, prob_post, pred_post) in enumerate(zip(sample_texts, probs_post, preds_post)):
-                    print(f"  Text: '{text[:50]}...'")
-                    print(f"  Probs: [neg: {prob_post[0]:.3f}, pos: {prob_post[1]:.3f}]")
-                    print(f"  Prediction: {'Positive' if pred_post.item() == 1 else 'Negative'}")
-                    
-                    # Show change if we have pre-training results
-                    if probs_pre is not None and preds_pre is not None:
-                        prob_pre = probs_pre[i]
-                        pred_pre = preds_pre[i]
-                        print(f"  Before: [neg: {prob_pre[0]:.3f}, pos: {prob_pre[1]:.3f}] → {'Positive' if pred_pre.item() == 1 else 'Negative'}")
-                        print(f"  Change: {'✅ Changed' if pred_pre != pred_post else '➖ Same'}")
-                    print()
+                        print("📊 Post-training classification results:")
+                        for i, (text, prob_post, pred_post) in enumerate(zip(sample_texts, probs_post, preds_post)):
+                            print(f"  Text: '{text[:50]}...'")
+                            print(f"  Probs: [neg: {prob_post[0]:.3f}, pos: {prob_post[1]:.3f}]")
+                            print(f"  Prediction: {'Positive' if pred_post.item() == 1 else 'Negative'}")
+                            print()
+
+                elif task_type == "question_answering":
+                    qa_samples = cfg.eval.get('qa_samples', [])
+                    if qa_samples:
+                        questions = [sample['question'] for sample in qa_samples]
+                        contexts = [sample['context'] for sample in qa_samples]
+                        
+                        qa_inputs = {
+                            'questions': questions,
+                            'contexts': contexts
+                        }
+                        
+                        predicted_answers = model.adapter.extract_answer(qa_inputs)
+                        
+                        print("📊 Post-training QA results:")
+                        for question, context, pred_answer in zip(questions, contexts, predicted_answers):
+                            print(f"  Question: '{question}'")
+                            print(f"  Context: '{context[:100]}...'")
+                            print(f"  Predicted Answer: '{pred_answer}'")
+                            print()
+
             except Exception as e:
                 print(f"⚠️  Post-training evaluation failed: {e}")
 
@@ -224,7 +277,7 @@ def main(cfg: DictConfig) -> None:
             torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats()
 
-    print("\n🎉 Llama-2 QLoRA experiment completed!")
+    print(f"\n🎉 Llama-2 QLoRA {task_type} experiment completed!")
 
 
 if __name__ == "__main__":

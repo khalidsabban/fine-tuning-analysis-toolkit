@@ -6,7 +6,7 @@ def test_trainer_one_step(tmp_path):
     dm = DummyDataModule(batch_size=2)
     dm.setup()
     model = TrainerModule(
-        base_model_name="sshleifer/tiny-gpt2",
+        base_model_name="NousResearch/Llama-2-7b-chat-hf",
         num_labels=2,
         lora_rank=4,
         learning_rate=1e-3
