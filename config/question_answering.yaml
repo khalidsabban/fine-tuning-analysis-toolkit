@@ -1,4 +1,4 @@
-# config/question_answering.yaml - QA Configuration Override
+# config/question_answering.yaml - Memory-Optimized QA Configuration for Colab
 defaults:
   - config
 
@@ -6,20 +6,29 @@ defaults:
 task:
   type: "question_answering"
 
-# QA dataset
+# Memory-optimized model settings
+model:
+  lora_rank: 4  # Reduced from 8 to save memory
+  quantization_config: "fp4"  # More aggressive quantization
+
+# QA dataset with very small size for Colab
 data:
   dataset_name: "squad"
-  split: "train[:5%]"
+  split: "train[:1%]"  # Much smaller dataset
   question_field: "question"
   context_field: "context"
   answers_field: "answers"
-  max_length: 384  # Shorter for QA to fit question + context
+  max_length: 256  # Shorter sequences to save memory
+  val_split_ratio: 0.1
 
-# Adjusted training for QA
+# Memory-optimized training settings
 training:
-  batch_size: 2  # Smaller batch size for longer sequences
-  gradient_accumulation_steps: 8  # Compensate with more accumulation
-  learning_rate: 3e-5  # Slightly higher LR for QA
+  batch_size: 1  # Minimum batch size
+  gradient_accumulation_steps: 16  # Compensate with more accumulation
+  learning_rate: 3e-5
+  max_epochs: 1  # Just one epoch for testing
+  gradient_checkpointing: true
+  use_mixed_precision: true
 
 # QA-specific evaluation samples
 eval:
@@ -33,5 +42,5 @@ eval:
 
 carbon:
   tracker:
-    project_name: llama2_qlora_qa_test
+    project_name: llama2_qlora_qa_test_colab
     
