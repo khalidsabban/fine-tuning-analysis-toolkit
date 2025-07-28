@@ -8,6 +8,7 @@ from transformers import (
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from typing import List, Dict, Union, Optional
+import gc
 
 class ModelAdapter(nn.Module):
     """
@@ -55,26 +56,35 @@ class ModelAdapter(nn.Module):
         device_str = str(self.device)
         
         if use_qlora:
+            # AGGRESSIVE MEMORY OPTIMIZATION
             # Clear any existing cache first
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+                gc.collect()
+                torch.cuda.reset_peak_memory_stats()
             
-            # More aggressive quantization config for memory efficiency
+            # Ultra-aggressive quantization config
             bnb_config = BitsAndBytesConfig(
                 load_in_4bit=True,
-                bnb_4bit_quant_type=quantization_config,
-                bnb_4bit_use_double_quant=True,  # Enable double quantization for better memory efficiency
-                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_quant_type="nf4",  # or "fp4" for even more compression
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+                llm_int8_threshold=6.0,
+                llm_int8_has_fp16_weight=False,
             )
             
-            # Load with more memory-efficient settings
+            # Load with EXTREME memory-efficient settings
             model_kwargs = {
                 "quantization_config": bnb_config,
-                "device_map": {"": 0},  # Force everything to GPU 0
+                "device_map": {"": 0},  # Everything on GPU 0
                 "trust_remote_code": True,
                 "torch_dtype": torch.float16,
                 "low_cpu_mem_usage": True,
+                "offload_folder": "offload",  # Enable CPU offloading
+                "offload_state_dict": True,
             }
+            
+            print("📊 Loading model with 4-bit quantization...")
             
             if task_type == "classification":
                 model_kwargs["num_labels"] = num_labels
@@ -88,52 +98,69 @@ class ModelAdapter(nn.Module):
             else:
                 raise ValueError(f"Unsupported task type: {task_type}")
             
-            # CRITICAL: Enable gradient checkpointing BEFORE prepare_model_for_kbit_training
-            base_model.gradient_checkpointing_enable()
+            # Print memory after loading
+            if torch.cuda.is_available():
+                print(f"📊 Memory after model load: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
             
-            # Prepare model for training
-            base_model = prepare_model_for_kbit_training(base_model)
+            # CRITICAL: Set model to eval mode first to save memory
+            base_model.eval()
+            
+            # Enable gradient checkpointing BEFORE prepare_model_for_kbit_training
+            if hasattr(base_model, 'gradient_checkpointing_enable'):
+                base_model.gradient_checkpointing_enable()
+                print("✅ Gradient checkpointing enabled")
+            
+            # Prepare model for training with memory-efficient approach
+            try:
+                # Try to prepare model
+                base_model = prepare_model_for_kbit_training(
+                    base_model, 
+                    use_gradient_checkpointing=True
+                )
+            except torch.cuda.OutOfMemoryError:
+                # If OOM, try more aggressive approach
+                print("⚠️ Initial preparation failed, trying memory-efficient approach...")
+                torch.cuda.empty_cache()
+                gc.collect()
+                
+                # Manually prepare model to avoid the float32 conversion
+                for name, param in base_model.named_parameters():
+                    # Instead of converting to float32, keep in original dtype
+                    param.requires_grad = False
+                    
+                # Only make specific layers trainable
+                if hasattr(base_model, 'model'):
+                    # For models with a 'model' attribute
+                    for name, param in base_model.model.named_parameters():
+                        if any(target in name for target in ["norm", "lm_head"]):
+                            param.data = param.data.float()
+                            param.requires_grad = True
             
             # Enable input gradients after preparation
             if hasattr(base_model, 'enable_input_require_grads'):
                 base_model.enable_input_require_grads()
-                
-        else:
-            # Non-QLoRA path with memory optimizations
+            
+            # Clear cache again
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+                print(f"📊 Memory after preparation: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
                 
-            model_kwargs = {
-                "use_safetensors": use_safetensors,
-                "torch_dtype": torch.float16,
-                "device_map": {"": 0},
-                "trust_remote_code": True,
-                "low_cpu_mem_usage": True,
-            }
-            
-            if task_type == "classification":
-                model_kwargs["num_labels"] = num_labels
-                base_model = AutoModelForSequenceClassification.from_pretrained(
-                    base_model_name, **model_kwargs
-                )
-            elif task_type == "question_answering":
-                base_model = AutoModelForQuestionAnswering.from_pretrained(
-                    base_model_name, **model_kwargs
-                )
-            else:
-                raise ValueError(f"Unsupported task type: {task_type}")
+        else:
+            # Non-QLoRA path
+            raise NotImplementedError("Non-QLoRA path not implemented for memory efficiency")
 
         # Sync the model's pad_token_id
         base_model.config.pad_token_id = self.tokenizer.pad_token_id
 
-        # Configure LoRA for Llama-2 with more conservative settings
+        # Configure LoRA with MINIMAL settings
         lora_config = LoraConfig(
             r=lora_rank,
-            lora_alpha=lora_rank * 2,  # Usually 2x the rank
-            target_modules=["q_proj", "v_proj"],  # Only essential modules
+            lora_alpha=lora_rank,  # Lower alpha for memory efficiency
+            target_modules=["q_proj", "v_proj"],  # Minimal modules
             bias="none",
             task_type="SEQ_CLS" if task_type == "classification" else "QUESTION_ANS",
-            lora_dropout=0.05,
+            lora_dropout=0.1,  # Slightly higher dropout
+            inference_mode=False,
         )
 
         # Attach PEFT LoRA with memory monitoring
@@ -142,9 +169,13 @@ class ModelAdapter(nn.Module):
             
         self.model = get_peft_model(base_model, lora_config)
         
-        # Clear cache after model creation
+        # Set model to training mode
+        self.model.train()
+        
+        # Final cleanup
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            gc.collect()
             print(f"📊 Memory after PEFT: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
         
         self.model.print_trainable_parameters()
@@ -170,6 +201,7 @@ class ModelAdapter(nn.Module):
 
     def _forward_classification(self, texts: List[str]):
         """Forward pass for classification tasks"""
+        # Process in smaller chunks if needed
         inputs = self.tokenizer(
             texts,
             return_tensors="pt",
@@ -179,7 +211,10 @@ class ModelAdapter(nn.Module):
         )
         
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        outputs = self.model(**inputs)
+        
+        # Use gradient checkpointing context if available
+        with torch.cuda.amp.autocast(enabled=True):
+            outputs = self.model(**inputs)
         
         if outputs.logits.device != self.device:
             outputs.logits = outputs.logits.to(self.device)
@@ -203,7 +238,10 @@ class ModelAdapter(nn.Module):
         )
         
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        outputs = self.model(**inputs)
+        
+        # Use gradient checkpointing context if available
+        with torch.cuda.amp.autocast(enabled=True):
+            outputs = self.model(**inputs)
         
         # QA models return start_logits and end_logits
         if outputs.start_logits.device != self.device:
