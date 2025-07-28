@@ -2,13 +2,25 @@ import torch
 import torch.nn as nn
 from transformers import (
     AutoModelForSequenceClassification,
-    AutoModelForQuestionAnswering,
     AutoTokenizer,
     BitsAndBytesConfig,
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from typing import List, Dict, Union, Optional
 import gc
+
+class QAHead(nn.Module):
+    """Custom QA head that's more memory efficient"""
+    def __init__(self, hidden_size):
+        super().__init__()
+        self.qa_outputs = nn.Linear(hidden_size, 2)  # 2 outputs: start and end
+        
+    def forward(self, hidden_states):
+        logits = self.qa_outputs(hidden_states)
+        start_logits, end_logits = logits.split(1, dim=-1)
+        start_logits = start_logits.squeeze(-1).contiguous()
+        end_logits = end_logits.squeeze(-1).contiguous()
+        return start_logits, end_logits
 
 class ModelAdapter(nn.Module):
     """
@@ -56,111 +68,67 @@ class ModelAdapter(nn.Module):
         device_str = str(self.device)
         
         if use_qlora:
-            # AGGRESSIVE MEMORY OPTIMIZATION
             # Clear any existing cache first
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 gc.collect()
-                torch.cuda.reset_peak_memory_stats()
             
-            # Ultra-aggressive quantization config
+            # More aggressive quantization config for memory efficiency
             bnb_config = BitsAndBytesConfig(
                 load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",  # or "fp4" for even more compression
+                bnb_4bit_quant_type=quantization_config,
                 bnb_4bit_use_double_quant=True,
-                bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
-                llm_int8_threshold=6.0,
-                llm_int8_has_fp16_weight=False,
+                bnb_4bit_compute_dtype=torch.float16,
             )
             
-            # Load with EXTREME memory-efficient settings
+            # Load with memory-efficient settings
             model_kwargs = {
                 "quantization_config": bnb_config,
-                "device_map": {"": 0},  # Everything on GPU 0
+                "device_map": {"": 0},
                 "trust_remote_code": True,
                 "torch_dtype": torch.float16,
                 "low_cpu_mem_usage": True,
-                "offload_folder": "offload",  # Enable CPU offloading
-                "offload_state_dict": True,
             }
             
-            print("📊 Loading model with 4-bit quantization...")
-            
-            if task_type == "classification":
-                model_kwargs["num_labels"] = num_labels
-                base_model = AutoModelForSequenceClassification.from_pretrained(
-                    base_model_name, **model_kwargs
-                )
-            elif task_type == "question_answering":
-                base_model = AutoModelForQuestionAnswering.from_pretrained(
-                    base_model_name, **model_kwargs
-                )
-            else:
-                raise ValueError(f"Unsupported task type: {task_type}")
-            
-            # Print memory after loading
-            if torch.cuda.is_available():
-                print(f"📊 Memory after model load: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
-            
-            # CRITICAL: Set model to eval mode first to save memory
-            base_model.eval()
+            # ALWAYS load as classification model first (uses less memory)
+            model_kwargs["num_labels"] = 2  # Dummy value
+            base_model = AutoModelForSequenceClassification.from_pretrained(
+                base_model_name, **model_kwargs
+            )
             
             # Enable gradient checkpointing BEFORE prepare_model_for_kbit_training
             if hasattr(base_model, 'gradient_checkpointing_enable'):
                 base_model.gradient_checkpointing_enable()
-                print("✅ Gradient checkpointing enabled")
             
-            # Prepare model for training with memory-efficient approach
-            try:
-                # Try to prepare model
-                base_model = prepare_model_for_kbit_training(
-                    base_model, 
-                    use_gradient_checkpointing=True
-                )
-            except torch.cuda.OutOfMemoryError:
-                # If OOM, try more aggressive approach
-                print("⚠️ Initial preparation failed, trying memory-efficient approach...")
-                torch.cuda.empty_cache()
-                gc.collect()
-                
-                # Manually prepare model to avoid the float32 conversion
-                for name, param in base_model.named_parameters():
-                    # Instead of converting to float32, keep in original dtype
-                    param.requires_grad = False
-                    
-                # Only make specific layers trainable
-                if hasattr(base_model, 'model'):
-                    # For models with a 'model' attribute
-                    for name, param in base_model.model.named_parameters():
-                        if any(target in name for target in ["norm", "lm_head"]):
-                            param.data = param.data.float()
-                            param.requires_grad = True
+            # Prepare model for training
+            base_model = prepare_model_for_kbit_training(base_model)
             
             # Enable input gradients after preparation
             if hasattr(base_model, 'enable_input_require_grads'):
                 base_model.enable_input_require_grads()
-            
-            # Clear cache again
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                print(f"📊 Memory after preparation: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+                
+            # Now modify for QA if needed
+            if task_type == "question_answering":
+                # Replace the classification head with a QA head
+                hidden_size = base_model.config.hidden_size
+                base_model.score = QAHead(hidden_size)
+                print("✅ Replaced classification head with QA head")
                 
         else:
             # Non-QLoRA path
-            raise NotImplementedError("Non-QLoRA path not implemented for memory efficiency")
+            raise NotImplementedError("Non-QLoRA path not implemented")
 
         # Sync the model's pad_token_id
         base_model.config.pad_token_id = self.tokenizer.pad_token_id
 
-        # Configure LoRA with MINIMAL settings
+        # Configure LoRA for Llama-2 with more conservative settings
         lora_config = LoraConfig(
             r=lora_rank,
-            lora_alpha=lora_rank,  # Lower alpha for memory efficiency
-            target_modules=["q_proj", "v_proj"],  # Minimal modules
+            lora_alpha=lora_rank * 2,
+            target_modules=["q_proj", "v_proj"],
             bias="none",
-            task_type="SEQ_CLS" if task_type == "classification" else "QUESTION_ANS",
-            lora_dropout=0.1,  # Slightly higher dropout
-            inference_mode=False,
+            task_type="SEQ_CLS",  # Always use SEQ_CLS to avoid issues
+            lora_dropout=0.05,
         )
 
         # Attach PEFT LoRA with memory monitoring
@@ -169,13 +137,9 @@ class ModelAdapter(nn.Module):
             
         self.model = get_peft_model(base_model, lora_config)
         
-        # Set model to training mode
-        self.model.train()
-        
-        # Final cleanup
+        # Clear cache after model creation
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            gc.collect()
             print(f"📊 Memory after PEFT: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
         
         self.model.print_trainable_parameters()
@@ -201,7 +165,6 @@ class ModelAdapter(nn.Module):
 
     def _forward_classification(self, texts: List[str]):
         """Forward pass for classification tasks"""
-        # Process in smaller chunks if needed
         inputs = self.tokenizer(
             texts,
             return_tensors="pt",
@@ -211,10 +174,7 @@ class ModelAdapter(nn.Module):
         )
         
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        
-        # Use gradient checkpointing context if available
-        with torch.cuda.amp.autocast(enabled=True):
-            outputs = self.model(**inputs)
+        outputs = self.model(**inputs)
         
         if outputs.logits.device != self.device:
             outputs.logits = outputs.logits.to(self.device)
@@ -234,22 +194,25 @@ class ModelAdapter(nn.Module):
             padding=True,
             truncation=True,
             max_length=self.max_length,
-            return_token_type_ids=False,  # Llama doesn't use token_type_ids
+            return_token_type_ids=False,
         )
         
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         
-        # Use gradient checkpointing context if available
-        with torch.cuda.amp.autocast(enabled=True):
-            outputs = self.model(**inputs)
+        # Get base model outputs
+        outputs = self.model.model(**inputs, output_hidden_states=True)
+        sequence_output = outputs.last_hidden_state
         
-        # QA models return start_logits and end_logits
-        if outputs.start_logits.device != self.device:
-            outputs.start_logits = outputs.start_logits.to(self.device)
-        if outputs.end_logits.device != self.device:
-            outputs.end_logits = outputs.end_logits.to(self.device)
-            
-        return outputs
+        # Apply our custom QA head
+        start_logits, end_logits = self.model.score(sequence_output)
+        
+        # Create a simple namespace to match expected output format
+        class QAOutput:
+            def __init__(self, start_logits, end_logits):
+                self.start_logits = start_logits
+                self.end_logits = end_logits
+        
+        return QAOutput(start_logits, end_logits)
 
     def extract_answer(self, qa_inputs: Dict[str, List[str]], max_answer_length: int = 30):
         """
@@ -284,8 +247,7 @@ class ModelAdapter(nn.Module):
             return_offsets_mapping=True,
         )
         
-        input_ids = tokenized['input_ids']
-        offset_mapping = tokenized.get('offset_mapping')
+        input_ids = tokenized['input_ids'].to(self.device)
         
         answers = []
         
@@ -299,13 +261,18 @@ class ModelAdapter(nn.Module):
             best_start = 0
             best_end = 0
             
-            for start_idx in range(len(start_scores)):
-                for end_idx in range(start_idx, min(start_idx + max_answer_length, len(end_scores))):
-                    score = start_scores[start_idx] + end_scores[end_idx]
-                    if score > best_score:
-                        best_score = score
-                        best_start = start_idx
-                        best_end = end_idx
+            # Get top k start and end indices
+            start_top_k = torch.topk(start_scores, k=min(20, len(start_scores)))
+            end_top_k = torch.topk(end_scores, k=min(20, len(end_scores)))
+            
+            for start_idx in start_top_k.indices:
+                for end_idx in end_top_k.indices:
+                    if start_idx <= end_idx and end_idx - start_idx < max_answer_length:
+                        score = start_scores[start_idx] + end_scores[end_idx]
+                        if score > best_score:
+                            best_score = score
+                            best_start = start_idx.item()
+                            best_end = end_idx.item()
             
             # Extract answer tokens
             answer_tokens = input_ids[i][best_start:best_end + 1]
@@ -327,4 +294,4 @@ class ModelAdapter(nn.Module):
         else:
             mb = (total * 2) / (1024**2)
         return f"~{mb:.1f} MB"
-    
+        
