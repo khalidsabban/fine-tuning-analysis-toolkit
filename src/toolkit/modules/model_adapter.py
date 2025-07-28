@@ -63,21 +63,17 @@ class ModelAdapter(nn.Module):
             bnb_config = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_quant_type=quantization_config,
-                bnb_4bit_use_double_quant=False,  # Disable double quantization to save memory
+                bnb_4bit_use_double_quant=True,  # Enable double quantization for better memory efficiency
                 bnb_4bit_compute_dtype=torch.float16,
-                bnb_4bit_quant_storage=torch.uint8,  # Use uint8 for storage
             )
             
             # Load with more memory-efficient settings
             model_kwargs = {
-                "use_safetensors": use_safetensors,
                 "quantization_config": bnb_config,
-                "device_map": "auto",  # Let it auto-distribute
+                "device_map": {"": 0},  # Force everything to GPU 0
                 "trust_remote_code": True,
-                "token": True,  # Updated from use_auth_token
                 "torch_dtype": torch.float16,
-                "low_cpu_mem_usage": True,  # Reduce CPU memory usage
-                "max_memory": {0: "14GB"},  # Limit GPU memory usage
+                "low_cpu_mem_usage": True,
             }
             
             if task_type == "classification":
@@ -91,11 +87,17 @@ class ModelAdapter(nn.Module):
                 )
             else:
                 raise ValueError(f"Unsupported task type: {task_type}")
+            
+            # CRITICAL: Enable gradient checkpointing BEFORE prepare_model_for_kbit_training
+            base_model.gradient_checkpointing_enable()
+            
+            # Prepare model for training
+            base_model = prepare_model_for_kbit_training(base_model)
+            
+            # Enable input gradients after preparation
+            if hasattr(base_model, 'enable_input_require_grads'):
+                base_model.enable_input_require_grads()
                 
-            # More memory-efficient preparation
-            base_model = prepare_model_for_kbit_training(
-                base_model, use_gradient_checkpointing=True
-            )
         else:
             # Non-QLoRA path with memory optimizations
             if torch.cuda.is_available():
@@ -104,11 +106,9 @@ class ModelAdapter(nn.Module):
             model_kwargs = {
                 "use_safetensors": use_safetensors,
                 "torch_dtype": torch.float16,
-                "device_map": "auto",
+                "device_map": {"": 0},
                 "trust_remote_code": True,
-                "token": True,
                 "low_cpu_mem_usage": True,
-                "max_memory": {0: "14GB"},
             }
             
             if task_type == "classification":
@@ -129,11 +129,11 @@ class ModelAdapter(nn.Module):
         # Configure LoRA for Llama-2 with more conservative settings
         lora_config = LoraConfig(
             r=lora_rank,
-            lora_alpha=16,  # Reduced from 32 to save memory
-            target_modules=["q_proj", "v_proj"],  # Reduced target modules to save memory
+            lora_alpha=lora_rank * 2,  # Usually 2x the rank
+            target_modules=["q_proj", "v_proj"],  # Only essential modules
             bias="none",
             task_type="SEQ_CLS" if task_type == "classification" else "QUESTION_ANS",
-            lora_dropout=0.05,  # Reduced dropout
+            lora_dropout=0.05,
         )
 
         # Attach PEFT LoRA with memory monitoring

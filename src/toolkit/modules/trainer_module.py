@@ -41,9 +41,8 @@ class TrainerModule(pl.LightningModule):
         
         print(f"📊 Model memory footprint: {self.adapter.get_memory_footprint()}")
         
-        if gradient_checkpointing and hasattr(self.adapter.model, 'gradient_checkpointing_enable'):
-            self.adapter.model.gradient_checkpointing_enable()
-            print("✅ Gradient checkpointing enabled")
+        # Note: Gradient checkpointing is already enabled in ModelAdapter
+        print("✅ Model initialized with gradient checkpointing")
 
     def forward(self, inputs):
         """Forward pass that handles both task types"""
@@ -257,14 +256,27 @@ class TrainerModule(pl.LightningModule):
             dummy_param = torch.tensor([0.0], requires_grad=True)
             return torch.optim.AdamW([dummy_param], lr=self.learning_rate)
 
-        # Configure optimizer
-        optimizer = torch.optim.AdamW(
-            trainable_params,
-            lr=self.learning_rate,
-            weight_decay=0.01,
-            betas=(0.9, 0.95),
-            eps=1e-6,
-        )
+        # Try to use 8-bit optimizer if available
+        try:
+            import bitsandbytes as bnb
+            optimizer = bnb.optim.PagedAdamW8bit(
+                trainable_params,
+                lr=self.learning_rate,
+                weight_decay=0.01,
+                betas=(0.9, 0.95),
+                eps=1e-6,
+            )
+            print("✅ Using 8-bit PagedAdamW optimizer")
+        except ImportError:
+            # Fallback to regular AdamW
+            optimizer = torch.optim.AdamW(
+                trainable_params,
+                lr=self.learning_rate,
+                weight_decay=0.01,
+                betas=(0.9, 0.95),
+                eps=1e-6,
+            )
+            print("ℹ️ Using standard AdamW optimizer (install bitsandbytes for memory efficiency)")
 
         # Configure scheduler
         if hasattr(self.trainer, 'estimated_stepping_batches') and self.trainer.estimated_stepping_batches:

@@ -27,6 +27,14 @@ def main(cfg: DictConfig) -> None:
     """
     Entry point for fine-tuning Llama-2 with QLoRA on classification or QA tasks.
     """
+    # Add memory management at the start
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+        
+        # Set memory fraction to leave some headroom
+        torch.cuda.set_per_process_memory_fraction(0.9)
+    
     task_type = cfg.task.type
     print(f"🔧 Initializing Llama-2 QLoRA experiment for {task_type}...")
     print(f"🎯 Model: {cfg.model.name}")
@@ -37,6 +45,7 @@ def main(cfg: DictConfig) -> None:
     # Check CUDA availability and memory
     if torch.cuda.is_available():
         device_name = torch.cuda.get_device_name()
+        total_memory = torch.cuda.get_device_properties()
         total_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
         print(f"🎯 CUDA device: {device_name}")
         print(f"💾 Total GPU memory: {total_memory:.2f} GB")
@@ -45,7 +54,6 @@ def main(cfg: DictConfig) -> None:
             print("⚠️  Warning: GPU memory may be insufficient for Llama-2-7B")
         
         torch.cuda.empty_cache()
-        torch.cuda.set_per_process_memory_fraction(0.95)
         initial_memory = torch.cuda.memory_allocated() / 1024**3
         print(f"📊 Initial GPU memory usage: {initial_memory:.2f} GB")
     else:
@@ -192,11 +200,11 @@ def main(cfg: DictConfig) -> None:
         except torch.cuda.OutOfMemoryError as e:
             print(f"❌ CUDA OOM Error: {e}")
             print("\n💡 Optimization suggestions:")
-            print("   1. Reduce batch_size")
+            print("   1. Reduce batch_size (already at 1)")
             print("   2. Increase gradient_accumulation_steps")
             print("   3. Reduce max_length")
-            print("   4. Try fp4 quantization instead of nf4")
-            print("   5. Reduce lora_rank")
+            print("   4. Reduce lora_rank further")
+            print("   5. Use cpu offloading")
             
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -207,6 +215,7 @@ def main(cfg: DictConfig) -> None:
             if "token" in str(e).lower():
                 print("💡 This might be an authentication error.")
                 print("   Make sure you have access to the Llama-2 model on HuggingFace.")
+                print("   You may need to run: huggingface-cli login")
             raise
 
         # 7) Evaluate *after* training
@@ -282,4 +291,4 @@ def main(cfg: DictConfig) -> None:
 
 if __name__ == "__main__":
     main()
-    
+            
