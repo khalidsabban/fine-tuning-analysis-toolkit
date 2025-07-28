@@ -23,12 +23,14 @@ data:
 
 # Memory-optimized training settings
 training:
-  batch_size: 1  # Minimum batch size
-  gradient_accumulation_steps: 16  # Compensate with more accumulation
-  learning_rate: 3e-5
-  max_epochs: 1  # Just one epoch for testing
+  batch_size: 1  # Perfect
+  gradient_accumulation_steps: 8  # Reduced from 16 for faster iteration
+  learning_rate: 2e-4  # Slightly higher for LoRA
+  max_epochs: 1
   gradient_checkpointing: true
   use_mixed_precision: true
+  # Add this for memory optimization
+  optim: "paged_adamw_8bit"  # 8-bit optimizer
 
 # QA-specific evaluation samples
 eval:
@@ -43,4 +45,3 @@ eval:
 carbon:
   tracker:
     project_name: llama2_qlora_qa_test_colab
-    
