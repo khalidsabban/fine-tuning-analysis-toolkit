@@ -112,6 +112,9 @@ class ModelAdapter(nn.Module):
                 # Replace the classification head with a QA head
                 hidden_size = base_model.config.hidden_size
                 base_model.score = QAHead(hidden_size)
+                # Make sure the new head is trainable
+                for param in base_model.score.parameters():
+                    param.requires_grad = True
                 print("✅ Replaced classification head with QA head")
                 
         else:
@@ -199,12 +202,26 @@ class ModelAdapter(nn.Module):
         
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         
-        # Get base model outputs
-        outputs = self.model.model(**inputs, output_hidden_states=True)
-        sequence_output = outputs.last_hidden_state
+        # For QA, we need to get the hidden states directly
+        # First, get the base model (without the classification/QA head)
+        if hasattr(self.model, 'base_model'):
+            # PEFT wrapped model
+            base_model = self.model.base_model.model
+        else:
+            base_model = self.model.model
+        
+        # Get the transformer outputs directly
+        transformer_outputs = base_model.model(**inputs, output_hidden_states=True)
+        sequence_output = transformer_outputs.last_hidden_state
         
         # Apply our custom QA head
-        start_logits, end_logits = self.model.score(sequence_output)
+        if hasattr(self.model, 'base_model'):
+            # For PEFT models
+            qa_head = self.model.base_model.score
+        else:
+            qa_head = self.model.score
+            
+        start_logits, end_logits = qa_head(sequence_output)
         
         # Create a simple namespace to match expected output format
         class QAOutput:
@@ -294,4 +311,4 @@ class ModelAdapter(nn.Module):
         else:
             mb = (total * 2) / (1024**2)
         return f"~{mb:.1f} MB"
-        
+    
