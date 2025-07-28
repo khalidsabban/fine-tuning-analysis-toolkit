@@ -8,7 +8,7 @@ task:
 
 # Memory-optimized model settings
 model:
-  name: skeskinen/llama-lite-134m
+  name: NousResearch/Llama-2-7b-chat-hf #skeskinen/llama-lite-134m
   lora_rank: 4  # Reduced from 8 to save memory
   quantization_config: "fp4"  # More aggressive quantization
 
