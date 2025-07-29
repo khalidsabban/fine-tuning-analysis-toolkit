@@ -99,6 +99,9 @@ class TrainerModule(pl.LightningModule):
         questions = batch["questions"]
         contexts = batch["contexts"]
         answers = batch["answers"]
+
+        # Get batch size
+        batch_size = len(questions)
         
         # Debug info for first few steps
         if self.step_count < 5:
@@ -163,9 +166,9 @@ class TrainerModule(pl.LightningModule):
             print(f"  End positions: {end_positions[:3].tolist()}")
         
         self.step_count += 1
-        self.log("train_loss", total_loss, prog_bar=True, on_step=True, on_epoch=True)
-        self.log("start_loss", start_loss, on_step=True, on_epoch=True)
-        self.log("end_loss", end_loss, on_step=True, on_epoch=True)
+        self.log("train_loss", total_loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=batch_size)
+        self.log("start_loss", start_loss, on_step=True, on_epoch=True, batch_size=batch_size)
+        self.log("end_loss", end_loss, on_step=True, on_epoch=True, batch_size=batch_size)
         
         return total_loss
 
@@ -204,6 +207,9 @@ class TrainerModule(pl.LightningModule):
         contexts = batch["contexts"]
         answers = batch["answers"]
         
+        # Get the batch size
+        batch_size = len(questions)
+        
         qa_inputs = {
             'questions': questions,
             'contexts': contexts
@@ -235,8 +241,9 @@ class TrainerModule(pl.LightningModule):
         
         avg_em = sum(exact_matches) / len(exact_matches) if exact_matches else 0.0
         
-        self.log("val_loss", total_loss, prog_bar=True)
-        self.log("val_em", avg_em, prog_bar=True)
+        # FIXED: Add batch_size parameter to all log calls
+        self.log("val_loss", total_loss, prog_bar=True, batch_size=batch_size)
+        self.log("val_em", avg_em, prog_bar=True, batch_size=batch_size)
         
         return total_loss
 
