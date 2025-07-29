@@ -254,6 +254,7 @@ class ModelAdapter(nn.Module):
         end_logits = outputs.end_logits
         
         # Tokenize to get input_ids for answer extraction
+        # Remove return_offsets_mapping since it's not supported
         tokenized = self.tokenizer(
             questions,
             contexts,
@@ -261,7 +262,6 @@ class ModelAdapter(nn.Module):
             padding=True,
             truncation=True,
             max_length=self.max_length,
-            return_offsets_mapping=True,
         )
         
         input_ids = tokenized['input_ids'].to(self.device)
