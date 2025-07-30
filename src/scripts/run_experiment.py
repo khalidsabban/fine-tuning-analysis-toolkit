@@ -36,7 +36,7 @@ def main(cfg: DictConfig) -> None:
         torch.cuda.set_per_process_memory_fraction(0.9)
     
     task_type = cfg.task.type
-    print(f"🔧 Initializing Llama-2 QLoRA experiment for {task_type}...")
+    print(f"\n🔧 Initializing Llama-2 QLoRA experiment for {task_type}...")
     print(f"🎯 Model: {cfg.model.name}")
     print(f"📊 LoRA rank: {cfg.model.lora_rank}")
     print(f"🔢 Quantization: {cfg.model.quantization_config}")
@@ -140,6 +140,8 @@ def main(cfg: DictConfig) -> None:
             benchmark=True,
             log_every_n_steps=5,
             detect_anomaly=False,
+            limit_val_batches=0, # Skip validation during training
+            num_sanity_val_steps=0, # Skip sanity check validation
         )
 
         # 5) Evaluate *before* training
