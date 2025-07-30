@@ -29,14 +29,14 @@ class ModelAdapter(nn.Module):
     """
     def __init__(
         self,
-        base_model_name: str = "NousResearch/Llama-2-7b-chat-hf",
+        base_model_name: str = "NousResearch/Llama-2-7b-hf",
         task_type: str = "classification",  # "classification" or "question_answering"
         num_labels: int = 2,  # Only used for classification
         lora_rank: int = 16,
         learning_rate: float = 2e-4,
         use_qlora: bool = True,
         use_safetensors: bool = True,
-        quantization_config: str = "nf4",
+        quantization_config: str = "fp4", # fpt is faster than nf4
         max_length: int = 512,
     ):
         super().__init__()
