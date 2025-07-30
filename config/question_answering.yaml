@@ -9,22 +9,24 @@ task:
 # Memory-optimized model settings
 model:
   name: NousResearch/Llama-2-7b-hf #skeskinen/llama-lite-134m
-  lora_rank: 4  # Reduced from 8 to save memory
+  lora_rank: 8  # Reduced from 8 to save memory
+  lora_alpha: 16 # For better stability
+  lora_dropout: 0.1 # Prevent overfitting
   quantization_config: "fp4"  # More aggressive quantization
 
 # QA dataset with very small size for Colab
 data:
   dataset_name: "squad"
-  split: "train[:1%]"  # Much smaller dataset
+  split: "train[:2%]"  # Much smaller dataset
   question_field: "question"
   context_field: "context"
   answers_field: "answers"
-  max_length: 128  # Shorter sequences to save memory
+  max_length: 256
   val_split_ratio: 0.1
 
 # Memory-optimized training settings
 training:
-  max_steps: 50
+  max_steps: 500
   max_epochs: -1
   batch_size: 1  # Perfect
   gradient_accumulation_steps: 4  # Reduced from 16 for faster iteration
