@@ -17,7 +17,7 @@ model:
 # QA dataset with very small size for Colab
 data:
   dataset_name: "squad"
-  split: "train[:2%]"  # Much smaller dataset
+  split: "train[:3%]"  # Much smaller dataset
   question_field: "question"
   context_field: "context"
   answers_field: "answers"
@@ -28,7 +28,7 @@ data:
 training:
   max_steps: 500
   max_epochs: -1
-  batch_size: 1  # Perfect
+  batch_size: 2  # Perfect
   gradient_accumulation_steps: 4  # Reduced from 16 for faster iteration
   learning_rate: 2e-4  # Slightly higher for LoRA
   gradient_checkpointing: true
