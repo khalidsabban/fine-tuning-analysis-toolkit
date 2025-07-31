@@ -10,7 +10,7 @@ class TrainerModule(pl.LightningModule):
     """
     def __init__(
         self,
-        base_model_name: str = "NousResearch/Llama-2-7b-chat-hf",
+        base_model_name: str = "NousResearch/Llama-2-7b-hf",
         task_type: str = "classification",  # "classification" or "question_answering"
         num_labels: int = 2,  # Only used for classification
         lora_rank: int = 16,
