@@ -45,7 +45,6 @@ def main(cfg: DictConfig) -> None:
     # Check CUDA availability and memory
     if torch.cuda.is_available():
         device_name = torch.cuda.get_device_name()
-        total_memory = torch.cuda.get_device_properties()
         total_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
         print(f"🎯 CUDA device: {device_name}")
         print(f"💾 Total GPU memory: {total_memory:.2f} GB")
@@ -68,7 +67,29 @@ def main(cfg: DictConfig) -> None:
     carbon.start()
 
     try:
-        # 2) Prepare the HF dataset DataModule
+        # 2) Initialize the TrainerModule FIRST (to get tokenizer)
+        print("🤖 Loading Llama-2 model...")
+        model = TrainerModule(
+            base_model_name=cfg.model.name,
+            task_type=task_type,
+            num_labels=cfg.model.get('num_labels', 2) if task_type == "classification" else None,
+            lora_rank=cfg.model.lora_rank,
+            learning_rate=cfg.training.learning_rate,
+            gradient_checkpointing=cfg.training.get('gradient_checkpointing', True),
+            use_qlora=cfg.model.get('use_qlora', True),
+            quantization_config=cfg.model.get('quantization_config', 'nf4'),
+            max_length=cfg.data.get('max_length', 512),
+        )
+        
+        # Check memory after model loading
+        if torch.cuda.is_available():
+            model_memory = torch.cuda.memory_allocated() / 1024**3
+            print(f"📊 Memory after model loading: {model_memory:.2f} GB")
+            
+            if model_memory > total_memory * 0.8:
+                print("⚠️  High memory usage detected. Consider optimizations.")
+
+        # 3) Prepare the HF dataset DataModule
         print("📚 Loading dataset...")
         
         if task_type == "classification":
@@ -93,39 +114,23 @@ def main(cfg: DictConfig) -> None:
                 answers_field=cfg.data.answers_field,
                 batch_size=cfg.training.batch_size,
                 num_workers=cfg.data.num_workers,
-                max_length=cfg.data.get('max_length', 384),
+                max_length=cfg.data.get('max_length', 512),
                 val_split_ratio=cfg.data.get('val_split_ratio', 0.1),
                 max_answer_length=cfg.qa.get('max_answer_length', 30),
                 doc_stride=cfg.qa.get('doc_stride', 128),
+                tokenizer=model.adapter.tokenizer,  # FIXED: Pass tokenizer immediately
             )
         else:
             raise ValueError(f"Unsupported task type: {task_type}")
         
+        # Setup data module
         dm.setup()
+        
+        # FIXED: Validate QA data quality
+        if task_type == "question_answering" and hasattr(dm, 'validate_qa_data'):
+            dm.validate_qa_data(num_samples=5)
 
-        # 3) Initialize the TrainerModule
-        print("🤖 Loading Llama-2 model...")
-        model = TrainerModule(
-            base_model_name=cfg.model.name,
-            task_type=task_type,
-            num_labels=cfg.model.get('num_labels', 2) if task_type == "classification" else None,
-            lora_rank=cfg.model.lora_rank,
-            learning_rate=cfg.training.learning_rate,
-            gradient_checkpointing=cfg.training.get('gradient_checkpointing', True),
-            use_qlora=cfg.model.get('use_qlora', True),
-            quantization_config=cfg.model.get('quantization_config', 'nf4'),
-            max_length=cfg.data.get('max_length', 512),
-        )
-
-        # Check memory after model loading
-        if torch.cuda.is_available():
-            model_memory = torch.cuda.memory_allocated() / 1024**3
-            print(f"📊 Memory after model loading: {model_memory:.2f} GB")
-            
-            if model_memory > total_memory * 0.8:
-                print("⚠️  High memory usage detected. Consider optimizations.")
-
-        # 4) Create trainer
+        # 4) Create trainer with better settings for QA
         trainer = pl.Trainer(
             max_steps=cfg.training.max_steps,
             max_epochs=cfg.training.max_epochs,
@@ -140,8 +145,12 @@ def main(cfg: DictConfig) -> None:
             benchmark=True,
             log_every_n_steps=5,
             detect_anomaly=False,
-            limit_val_batches=0, # Skip validation during training
-            num_sanity_val_steps=0, # Skip sanity check validation
+            limit_val_batches=0.1 if task_type == "question_answering" else 0,  # FIXED: Enable some validation for QA
+            num_sanity_val_steps=0,
+            # FIXED: Add callbacks for better monitoring
+            callbacks=[
+                pl.callbacks.LearningRateMonitor(logging_interval='step'),
+            ] if task_type == "question_answering" else [],
         )
 
         # 5) Evaluate *before* training
@@ -293,4 +302,4 @@ def main(cfg: DictConfig) -> None:
 
 if __name__ == "__main__":
     main()
-            
+    
