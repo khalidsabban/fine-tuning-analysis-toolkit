@@ -147,10 +147,7 @@ def main(cfg: DictConfig) -> None:
             detect_anomaly=False,
             limit_val_batches=0.1 if task_type == "question_answering" else 0,  # FIXED: Enable some validation for QA
             num_sanity_val_steps=0,
-            # FIXED: Add callbacks for better monitoring
-            callbacks=[
-                pl.callbacks.LearningRateMonitor(logging_interval='step'),
-            ] if task_type == "question_answering" else [],
+            # FIXED: Callbacks removed since we have no logger
         )
 
         # 5) Evaluate *before* training
