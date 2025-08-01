@@ -128,8 +128,10 @@ class TrainerModule(pl.LightningModule):
             self.qa_training_stats['empty_answer_batches'] += 1
             print(f"⚠️  Batch {batch_idx}: All samples invalid, skipping...")
             
-            # Return a dummy loss that doesn't affect training
-            dummy_loss = torch.tensor(0.0, requires_grad=True, device=self.device)
+            # Return a proper dummy loss (CHANGED THIS PART)
+            dummy_input = torch.randn(1, 10, requires_grad=True, device=self.device)
+            dummy_loss = 0.001 * dummy_input.mean()
+            
             self.log("train_loss", dummy_loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=batch_size)
             return dummy_loss
         
