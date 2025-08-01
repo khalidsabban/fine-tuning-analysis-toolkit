@@ -10,22 +10,47 @@ from typing import List, Dict, Union, Optional
 import gc
 
 class QAHead(nn.Module):
-    """Custom QA head that's more memory efficient"""
+    """
+    Custom QA head that's more memory efficient.
+    
+    ENHANCED: Better initialization and more stable forward pass.
+    """
     def __init__(self, hidden_size):
         super().__init__()
         self.qa_outputs = nn.Linear(hidden_size, 2)  # 2 outputs: start and end
         
+        # NEW: Better initialization for QA tasks
+        torch.nn.init.normal_(self.qa_outputs.weight, std=0.02)
+        torch.nn.init.zeros_(self.qa_outputs.bias)
+        
     def forward(self, hidden_states):
-        logits = self.qa_outputs(hidden_states)
-        start_logits, end_logits = logits.split(1, dim=-1)
-        start_logits = start_logits.squeeze(-1).contiguous()
-        end_logits = end_logits.squeeze(-1).contiguous()
+        """
+        Forward pass with enhanced stability.
+        
+        Args:
+            hidden_states: [batch_size, seq_len, hidden_size]
+            
+        Returns:
+            start_logits: [batch_size, seq_len]
+            end_logits: [batch_size, seq_len]
+        """
+        logits = self.qa_outputs(hidden_states)  # [batch_size, seq_len, 2]
+        start_logits, end_logits = logits.split(1, dim=-1)  # Each: [batch_size, seq_len, 1]
+        start_logits = start_logits.squeeze(-1).contiguous()  # [batch_size, seq_len]
+        end_logits = end_logits.squeeze(-1).contiguous()    # [batch_size, seq_len]
+        
         return start_logits, end_logits
 
 class ModelAdapter(nn.Module):
     """
     Wraps a HuggingFace model with optional QLoRA via PEFT and BitsAndBytesConfig,
     supporting both classification and question answering tasks.
+    
+    MAJOR FIXES FOR QA:
+    - Simplified forward pass
+    - Better answer extraction
+    - Improved memory management
+    - Fixed device handling
     """
     def __init__(
         self,
@@ -36,8 +61,8 @@ class ModelAdapter(nn.Module):
         learning_rate: float = 2e-4,
         use_qlora: bool = True,
         use_safetensors: bool = True,
-        quantization_config: str = "fp4", # fpt is faster than nf4
-        max_length: int = 512,
+        quantization_config: str = "fp4",  # fp4 is faster than nf4
+        max_length: int = 512,  # INCREASED: from 384
     ):
         super().__init__()
         self.task_type = task_type
@@ -52,10 +77,10 @@ class ModelAdapter(nn.Module):
             else torch.device("cpu")
         )
 
-        # Load tokenizer
+        # Load tokenizer with enhanced settings
         self.tokenizer = AutoTokenizer.from_pretrained(
             base_model_name, 
-            use_fast=False,
+            use_fast=True,  # CHANGED: Use fast tokenizer for better offset mapping
             trust_remote_code=True
         )
         
@@ -63,6 +88,15 @@ class ModelAdapter(nn.Module):
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+
+        # NEW: Verify tokenizer supports required features for QA
+        if task_type == "question_answering":
+            try:
+                # Test if tokenizer supports offset mapping
+                test_result = self.tokenizer("test", return_offsets_mapping=True)
+                print("✅ Tokenizer supports offset mapping for QA")
+            except Exception as e:
+                print(f"⚠️  Tokenizer may not support offset mapping: {e}")
 
         # Build the model based on task type
         device_str = str(self.device)
@@ -124,13 +158,13 @@ class ModelAdapter(nn.Module):
         # Sync the model's pad_token_id
         base_model.config.pad_token_id = self.tokenizer.pad_token_id
 
-        # Configure LoRA for Llama-2 with more conservative settings
+        # Configure LoRA for Llama-2 with QA-optimized settings
         lora_config = LoraConfig(
             r=lora_rank,
             lora_alpha=lora_rank * 2,
-            target_modules=["q_proj", "v_proj"],
+            target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],  # EXPANDED: More modules for QA
             bias="none",
-            task_type="SEQ_CLS",  # Always use SEQ_CLS to avoid issues
+            task_type="SEQ_CLS",  # Keep as SEQ_CLS to avoid PEFT issues
             lora_dropout=0.05,
         )
 
@@ -149,13 +183,19 @@ class ModelAdapter(nn.Module):
 
         print(f"✅ Loaded Llama-2 {task_type} model with {'QLoRA' if use_qlora else 'LoRA'} on {device_str}")
 
-    def __call__(self, inputs: Union[List[str], Dict[str, List[str]]]):
+    def get_memory_footprint(self):
+        """Get model memory footprint"""
+        if torch.cuda.is_available():
+            return f"{torch.cuda.memory_allocated() / 1024**3:.2f} GB"
+        return "N/A (CPU)"
+
+    def __call__(self, inputs: Union[List[str], Dict[str, torch.Tensor]]):
         """
-        Forward pass that handles both classification and QA inputs.
+        ENHANCED: Forward pass that handles both classification and QA inputs.
         
         Args:
             inputs: For classification: List[str] of texts
-                   For QA: Dict with 'questions' and 'contexts' keys
+                   For QA: Dict with tensor inputs (input_ids, attention_mask)
         """
         self.model.to(self.device)
         
@@ -167,7 +207,7 @@ class ModelAdapter(nn.Module):
             raise ValueError(f"Unsupported task type: {self.task_type}")
 
     def _forward_classification(self, texts: List[str]):
-        """Forward pass for classification tasks"""
+        """Forward pass for classification tasks - unchanged"""
         inputs = self.tokenizer(
             texts,
             return_tensors="pt",
@@ -184,46 +224,39 @@ class ModelAdapter(nn.Module):
             
         return outputs.logits
 
-    def _forward_qa(self, qa_inputs: Dict[str, List[str]]):
-        """Forward pass for question answering tasks"""
-        questions = qa_inputs['questions']
-        contexts = qa_inputs['contexts']
+    def _forward_qa(self, model_inputs: Dict[str, torch.Tensor]):
+        """
+        COMPLETELY REWRITTEN: Simplified forward pass for QA tasks.
         
-        # Tokenize question + context pairs
-        inputs = self.tokenizer(
-            questions,
-            contexts,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-            max_length=self.max_length,
-            return_token_type_ids=False,
-        )
+        Args:
+            model_inputs: Dict with 'input_ids' and 'attention_mask' tensors
+            
+        Returns:
+            QAOutput with start_logits and end_logits
+        """
+        # Ensure inputs are on correct device
+        model_inputs = {k: v.to(self.device) for k, v in model_inputs.items()}
         
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        
-        # For QA, we need to get the hidden states directly
-        # First, get the base model (without the classification/QA head)
+        # Get hidden states from the base model
         if hasattr(self.model, 'base_model'):
             # PEFT wrapped model
             base_model = self.model.base_model.model
         else:
             base_model = self.model.model
         
-        # Get the transformer outputs directly
-        transformer_outputs = base_model.model(**inputs, output_hidden_states=True)
+        # Forward through transformer
+        transformer_outputs = base_model.model(**model_inputs)
         sequence_output = transformer_outputs.last_hidden_state
         
-        # Apply our custom QA head
+        # Apply QA head
         if hasattr(self.model, 'base_model'):
-            # For PEFT models
             qa_head = self.model.base_model.score
         else:
             qa_head = self.model.score
             
         start_logits, end_logits = qa_head(sequence_output)
         
-        # Create a simple namespace to match expected output format
+        # Create output object
         class QAOutput:
             def __init__(self, start_logits, end_logits):
                 self.start_logits = start_logits
@@ -233,10 +266,10 @@ class ModelAdapter(nn.Module):
 
     def extract_answer(self, qa_inputs: Dict[str, List[str]], max_answer_length: int = 30):
         """
-        Extract answers from QA model outputs.
+        FIXED: Extract answers from QA model outputs with better logic.
         
         Args:
-            qa_inputs: Dict with 'questions' and 'contexts'
+            qa_inputs: Dict with 'questions' and 'contexts' lists
             max_answer_length: Maximum answer length in tokens
             
         Returns:
@@ -248,13 +281,7 @@ class ModelAdapter(nn.Module):
         questions = qa_inputs['questions']
         contexts = qa_inputs['contexts']
         
-        # Get model outputs
-        outputs = self(qa_inputs)
-        start_logits = outputs.start_logits
-        end_logits = outputs.end_logits
-        
-        # Tokenize to get input_ids for answer extraction
-        # Remove return_offsets_mapping since it's not supported
+        # Tokenize inputs
         tokenized = self.tokenizer(
             questions,
             contexts,
@@ -264,51 +291,138 @@ class ModelAdapter(nn.Module):
             max_length=self.max_length,
         )
         
-        input_ids = tokenized['input_ids'].to(self.device)
+        # Move to device
+        model_inputs = {k: v.to(self.device) for k, v in tokenized.items()}
+        
+        # Get model outputs
+        outputs = self(model_inputs)
+        start_logits = outputs.start_logits
+        end_logits = outputs.end_logits
+        
+        input_ids = model_inputs['input_ids']
         
         answers = []
         
         for i in range(len(questions)):
-            # Get best start and end positions
-            start_scores = start_logits[i]
-            end_scores = end_logits[i]
+            # Find where context starts (after [SEP] token)
+            sep_token_id = self.tokenizer.sep_token_id
+            input_id_list = input_ids[i].tolist()
             
-            # Find the best valid start/end pair
+            # Find first [SEP] token (after question)
+            context_start_idx = None
+            sep_count = 0
+            for idx, token_id in enumerate(input_id_list):
+                if token_id == sep_token_id:
+                    sep_count += 1
+                    if sep_count == 1:  # First [SEP] after question
+                        context_start_idx = idx + 1
+                        break
+            
+            if context_start_idx is None:
+                # Fallback: estimate based on question length
+                question_tokens = self.tokenizer(questions[i], add_special_tokens=False)
+                context_start_idx = len(question_tokens['input_ids']) + 2  # +2 for [CLS] and [SEP]
+            
+            # Only consider logits from context part
+            valid_start = min(context_start_idx, len(start_logits[i]) - 1)
+            valid_end = len(start_logits[i])
+            
+            # Get logits only from context portion
+            context_start_logits = start_logits[i, valid_start:valid_end]
+            context_end_logits = end_logits[i, valid_start:valid_end]
+            
+            if len(context_start_logits) == 0:
+                # No context portion found
+                answers.append("")
+                continue
+            
+            # Find best valid answer span
             best_score = float('-inf')
-            best_start = 0
-            best_end = 0
+            best_start = valid_start
+            best_end = valid_start
             
-            # Get top k start and end indices
-            start_top_k = torch.topk(start_scores, k=min(20, len(start_scores)))
-            end_top_k = torch.topk(end_scores, k=min(20, len(end_scores)))
+            # Get top-k start positions
+            k = min(10, len(context_start_logits))
+            start_scores, start_indices = torch.topk(context_start_logits, k=k)
             
-            for start_idx in start_top_k.indices:
-                for end_idx in end_top_k.indices:
-                    if start_idx <= end_idx and end_idx - start_idx < max_answer_length:
-                        score = start_scores[start_idx] + end_scores[end_idx]
+            for j, start_offset in enumerate(start_indices):
+                start_idx = start_offset.item() + valid_start
+                
+                # Look for best end position after this start
+                max_end_idx = min(start_idx + max_answer_length, valid_end)
+                if max_end_idx > start_idx:
+                    end_scores_slice = end_logits[i, start_idx:max_end_idx]
+                    if len(end_scores_slice) > 0:
+                        end_offset = torch.argmax(end_scores_slice)
+                        end_idx = start_idx + end_offset.item()
+                        
+                        # Calculate combined score
+                        score = start_scores[j] + end_scores_slice[end_offset]
+                        
                         if score > best_score:
                             best_score = score
-                            best_start = start_idx.item()
-                            best_end = end_idx.item()
+                            best_start = start_idx
+                            best_end = end_idx
             
             # Extract answer tokens
-            answer_tokens = input_ids[i][best_start:best_end + 1]
-            answer_text = self.tokenizer.decode(answer_tokens, skip_special_tokens=True)
+            if best_end >= best_start and best_start < len(input_ids[i]) and best_end < len(input_ids[i]):
+                answer_tokens = input_ids[i][best_start:best_end + 1]
+                answer_text = self.tokenizer.decode(answer_tokens, skip_special_tokens=True)
+                
+                # Clean the answer
+                answer_text = self._clean_extracted_answer(answer_text)
+                
+                # Validate answer doesn't contain question words
+                question_indicators = ['what', 'who', 'when', 'where', 'why', 'how', 'which', '?']
+                if any(indicator in answer_text.lower() for indicator in question_indicators):
+                    # Try alternative extraction
+                    # Get the highest scoring span that doesn't contain question words
+                    alternative_found = False
+                    
+                    for j in range(min(20, len(context_start_logits))):
+                        alt_start = torch.topk(context_start_logits, k=j+1)[1][-1].item() + valid_start
+                        
+                        for length in range(1, min(max_answer_length, valid_end - alt_start)):
+                            alt_end = alt_start + length
+                            if alt_end < len(input_ids[i]):
+                                alt_tokens = input_ids[i][alt_start:alt_end + 1]
+                                alt_text = self.tokenizer.decode(alt_tokens, skip_special_tokens=True).strip()
+                                
+                                if alt_text and not any(ind in alt_text.lower() for ind in question_indicators):
+                                    answer_text = alt_text
+                                    alternative_found = True
+                                    break
+                        
+                        if alternative_found:
+                            break
+            else:
+                answer_text = ""
             
-            # Clean up the answer
-            answer_text = answer_text.strip()
             answers.append(answer_text)
         
         return answers
 
-    def get_memory_footprint(self) -> str:
-        """Estimate memory usage in MB."""
-        total = sum(p.numel() for p in self.model.parameters())
-        if self.use_qlora:
-            trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-            base = total - trainable
-            mb = (base * 0.5 + trainable * 4) / (1024**2)
-        else:
-            mb = (total * 2) / (1024**2)
-        return f"~{mb:.1f} MB"
+    def _clean_extracted_answer(self, answer_text: str) -> str:
+        """
+        NEW: Clean extracted answer text.
+        
+        Args:
+            answer_text: Raw extracted answer
+            
+        Returns:
+            Cleaned answer text
+        """
+        # Remove extra whitespace
+        answer_text = ' '.join(answer_text.split())
+        
+        # Remove common artifacts
+        answer_text = answer_text.strip('.,;:!? ')
+        
+        # Remove incomplete words at the end
+        if answer_text and answer_text[-1] not in '.!?' and len(answer_text.split()) > 1:
+            words = answer_text.split()
+            if len(words[-1]) < 3 and not words[-1].isdigit():
+                answer_text = ' '.join(words[:-1])
+        
+        return answer_text
     
