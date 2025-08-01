@@ -21,7 +21,7 @@ data:
   question_field: "question"
   context_field: "context"
   answers_field: "answers"
-  max_length: 512
+  max_length: 768
   val_split_ratio: 0.1
 
 # Memory-optimized training settings
