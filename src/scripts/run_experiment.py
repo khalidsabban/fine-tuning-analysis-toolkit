@@ -137,7 +137,7 @@ def main(cfg: DictConfig) -> None:
             logger=False,
             enable_checkpointing=False,
             enable_progress_bar=True,
-            precision=16 if cfg.training.get('use_mixed_precision', True) else 32,
+            precision=32, #16 if cfg.training.get('use_mixed_precision', True) else 32,
             gradient_clip_val=1.0,
             gradient_clip_algorithm='norm',
             accumulate_grad_batches=cfg.training.get('gradient_accumulation_steps', 1),
@@ -299,4 +299,3 @@ def main(cfg: DictConfig) -> None:
 
 if __name__ == "__main__":
     main()
-    
