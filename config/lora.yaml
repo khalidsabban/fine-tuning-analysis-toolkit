@@ -1,0 +1,4 @@
+# lora.yaml - LoRA-specific overrides
+model:
+  lora_rank: 8
+  use_qlora: false

@@ -1,0 +1,9 @@
+# qlora.yaml - QLoRA-specific overrides
+model:
+  use_qlora: true
+  lora_rank: 8
+  quantization_config: "nf4"
+
+qlora:
+  nested_quantization: true
+  compute_dtype: "float16"
