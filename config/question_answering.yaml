@@ -1,12 +1,9 @@
-# config/question_answering.yaml - Memory-Optimized QA Configuration for Colab
 defaults:
   - config
 
-# Override task type
 task:
   type: "question_answering"
 
-# Memory-optimized model settings
 model:
   name: NousResearch/Llama-2-7b-hf #skeskinen/llama-lite-134m
   lora_rank: 32  # Reduced from 8 to save memory
@@ -28,7 +25,7 @@ data:
 training:
   max_steps: 1000
   max_epochs: 3
-  batch_size: 2  # Perfect
+  batch_size: 2 
   gradient_accumulation_steps: 4  # Reduced from 16 for faster iteration
   learning_rate: 5e-5  # Slightly higher for LoRA
   gradient_checkpointing: true
