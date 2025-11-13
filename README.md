@@ -1,4 +1,4 @@
-# fine-tuning-analysis-toolkit
+# Fine-Tuning Analysis Toolkit
 
 A batteries-included research toolkit for fine-tuning and evaluating language models with LoRA/QLoRA, Hydra-powered configuration, PyTorch Lightning training, MLflow experiment tracking, and CodeCarbon energy accounting. Comes with a tiny dashboard, clean CLI scripts, and unit tests.
 
